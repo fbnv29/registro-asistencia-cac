@@ -1,0 +1,48 @@
+{
+  "name": "registro-asistencia-cac",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.12"
+  },
+  "scripts": {
+    "dev": "tsx watch server/dev.ts",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:integration": "vitest run tests/integration.test.ts",
+    "db:migrate": "tsx scripts/migrate.ts",
+    "db:seed": "tsx scripts/seed.ts",
+    "db:passwords": "tsx scripts/passwords.ts",
+    "format": "prettier --write src server scripts tests netlify *.json *.ts *.html README.md"
+  },
+  "dependencies": {
+    "@neondatabase/serverless": "^1.0.2",
+    "exceljs": "^4.4.0",
+    "lucide-react": "^0.468.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "ws": "^8.18.0",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@netlify/functions": "^6.0.3",
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@types/ws": "^8.5.0",
+    "@vitejs/plugin-react": "^6.1.2",
+    "dotenv": "^16.4.0",
+    "prettier": "^3.9.10",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0",
+    "vite": "^8.3.5",
+    "vitest": "^5.0.5"
+  },
+  "overrides": {
+    "exceljs": {
+      "uuid": "^11.1.1"
+    }
+  }
+}

@@ -1,0 +1,16 @@
+CREATE TABLE IF NOT EXISTS schema_migrations (name text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now());
+CREATE TABLE teachers (id uuid PRIMARY KEY, name text NOT NULL CHECK(length(trim(name)) > 0));
+CREATE TABLE periods (id uuid PRIMARY KEY, name text NOT NULL, start_date date NOT NULL, end_date date NOT NULL, CHECK (end_date >= start_date), CHECK (end_date - start_date <= 730));
+CREATE TABLE books (id uuid PRIMARY KEY, teacher_id uuid NOT NULL REFERENCES teachers(id), period_id uuid NOT NULL REFERENCES periods(id), discipline text NOT NULL, sessions_per_week integer NOT NULL CHECK (sessions_per_week BETWEEN 1 AND 7), duration_minutes integer NOT NULL DEFAULT 45 CHECK (duration_minutes BETWEEN 5 AND 480), password_hash text NOT NULL);
+CREATE TABLE students (id uuid PRIMARY KEY, full_name text NOT NULL CHECK(length(trim(full_name)) > 0));
+CREATE TABLE enrollments (id uuid PRIMARY KEY, student_id uuid NOT NULL REFERENCES students(id), book_id uuid NOT NULL REFERENCES books(id), joined_on date NOT NULL, left_on date, CHECK(left_on IS NULL OR left_on >= joined_on), UNIQUE(student_id, book_id));
+CREATE TABLE schedule_versions (id uuid PRIMARY KEY, enrollment_id uuid NOT NULL REFERENCES enrollments(id), effective_from date NOT NULL, slots jsonb NOT NULL CHECK(jsonb_typeof(slots) = 'array'), UNIQUE(enrollment_id,effective_from));
+CREATE TABLE lessons (id uuid PRIMARY KEY, enrollment_id uuid NOT NULL REFERENCES enrollments(id), date date NOT NULL, slot integer NOT NULL CHECK(slot BETWEEN 0 AND 6), time time NOT NULL, UNIQUE(enrollment_id,date,slot));
+CREATE TABLE attendance (lesson_id uuid PRIMARY KEY REFERENCES lessons(id), status text NOT NULL CHECK(status IN ('present','absent','justified')), updated_at timestamptz NOT NULL DEFAULT now());
+CREATE TABLE suspensions (id uuid PRIMARY KEY, scope text NOT NULL CHECK(scope IN ('center','teacher','book')), target_id uuid, start_date date NOT NULL, end_date date NOT NULL, reason text NOT NULL, CHECK(end_date >= start_date), CHECK((scope = 'center' AND target_id IS NULL) OR (scope <> 'center' AND target_id IS NOT NULL)));
+CREATE INDEX suspensions_dates ON suspensions(start_date,end_date);
+CREATE INDEX enrollment_book ON enrollments(book_id);
+CREATE TABLE access_keys (kind text PRIMARY KEY CHECK(kind IN ('admin','creator')), password_hash text NOT NULL);
+CREATE TABLE access_sessions (token_hash text PRIMARY KEY, kind text NOT NULL CHECK(kind IN ('admin','creator','book')), book_id uuid REFERENCES books(id), expires_at timestamptz NOT NULL, CHECK((kind = 'book' AND book_id IS NOT NULL) OR (kind <> 'book' AND book_id IS NULL)));
+CREATE TABLE login_limits (key_hash text PRIMARY KEY, attempts integer NOT NULL, window_start timestamptz NOT NULL);
+CREATE TABLE audit_log (id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY, happened_at timestamptz NOT NULL DEFAULT now(), access_kind text NOT NULL, action text NOT NULL, book_id uuid, details jsonb NOT NULL);
