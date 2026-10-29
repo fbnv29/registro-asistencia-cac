@@ -1743,23 +1743,12 @@ export default function App() {
       )}
       {catalog && page === "home" && (
         <main className="container home">
-          <section className="home-intro">
-            <div>
-              <div className="eyebrow">
-                CENTRO ARTÍSTICO CULTURAL CONCEPCIÓN
-              </div>
-              <h1>Libros de clases</h1>
-              <p>
-                Consulta tus cursos y registra la asistencia de cada semana.
-              </p>
-            </div>
-          </section>
           <section className="library">
             <div className="library-heading">
               <div>
-                <h2>
-                  Cursos y talleres <span>{catalog.books.length}</span>
-                </h2>
+                <h1>
+                  Libros de clases <span>{catalog.books.length}</span>
+                </h1>
                 <p>Elige tu libro para registrar la asistencia.</p>
               </div>
               <button
@@ -1852,18 +1841,6 @@ export default function App() {
                 </p>
               )}
           </section>
-          <aside className="home-note">
-            <span className="note-icon">
-              <ShieldCheck size={24} />
-            </span>
-            <div>
-              <strong>Acceso a los libros</strong>
-              <p>
-                Ingresa con tu contraseña. Si necesitas ayuda, acércate a
-                administración.
-              </p>
-            </div>
-          </aside>
         </main>
       )}
       {catalog && page === "book" && selected && (

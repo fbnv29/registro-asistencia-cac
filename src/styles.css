@@ -2093,3 +2093,164 @@ h1 em {
 .cover-top {
   mix-blend-mode: screen;
 }
+
+/* Compact library: prioritize books over repeated headings and margins. */
+.topbar {
+  height: 88px;
+  padding-left: 32px;
+  padding-right: 32px;
+}
+.cac-logo {
+  width: 72px;
+  height: 72px;
+}
+.home.container {
+  max-width: 1440px;
+  padding: 24px 32px 0;
+}
+.home .library {
+  padding-top: 0;
+}
+.home .library-heading h1 {
+  margin: 0 0 6px;
+  font-size: 29px;
+  line-height: 1.25;
+  letter-spacing: -0.8px;
+}
+.library-heading h1 > span {
+  display: inline-block;
+  font:
+    600 13px "Source Sans 3",
+    sans-serif;
+  vertical-align: middle;
+  padding: 3px 7px;
+  margin-left: 5px;
+  border-radius: 4px;
+  background: #e6edf2;
+  color: #00627e;
+}
+.home .library-heading p {
+  font-size: 15px;
+}
+.home .library-filters {
+  margin-top: 16px;
+  padding-bottom: 10px;
+}
+.home .filter-label:after {
+  bottom: -21px;
+}
+.home .books-grid {
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 20px;
+  margin: 20px 0 22px;
+}
+.home .book-cover {
+  min-height: 278px;
+  padding: 18px 22px 18px 30px;
+  display: flex;
+  flex-direction: column;
+}
+.home .cover-logo {
+  height: 56px;
+  width: 56px;
+}
+.home .cover-top {
+  margin-bottom: 16px;
+  gap: 10px;
+}
+.home .book-cover h3 {
+  font-size: 26px;
+  margin-bottom: 8px;
+}
+.home .book-cover > p {
+  margin-bottom: 20px;
+}
+.home .cover-bottom {
+  margin-top: auto;
+}
+.home .book-card {
+  padding-bottom: 34px;
+}
+.home .book-spine {
+  bottom: 34px;
+}
+.home .book-pages {
+  bottom: 28px;
+}
+.home .book-open {
+  bottom: 0;
+}
+.footer {
+  margin-top: 16px;
+  padding-top: 16px;
+  padding-bottom: 18px;
+}
+@media (min-width: 1500px) {
+  .home .books-grid {
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  }
+}
+@media (max-width: 700px) {
+  .topbar {
+    height: 80px;
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+  .cac-logo {
+    width: 66px;
+    height: 66px;
+  }
+  .home.container {
+    padding: 20px 16px 0;
+  }
+  .home .library-heading h1 {
+    font-size: 23px;
+  }
+  .home .library-heading p {
+    font-size: 13px;
+  }
+  .home .library-heading {
+    align-items: center;
+  }
+  .home .library-heading .button {
+    padding: 9px 10px;
+    font-size: 13px;
+  }
+  .home .library-filters {
+    margin-top: 14px;
+    gap: 14px;
+  }
+  .home .filter-label:after {
+    bottom: -8px;
+  }
+  .home .books-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 16px 12px;
+    margin-top: 16px;
+  }
+  .home .book-cover {
+    min-height: 258px;
+    padding: 14px 12px 14px 23px;
+  }
+  .home .cover-logo {
+    height: 48px;
+    width: 48px;
+  }
+  .home .cover-top {
+    margin-bottom: 13px;
+    gap: 4px;
+  }
+  .home .book-cover h3 {
+    font-size: 19px;
+  }
+  .home .book-cover > p {
+    margin-bottom: 15px;
+    font-size: 12px;
+  }
+  .home .cover-bottom {
+    font-size: 9px;
+  }
+}
+.home .book-cover h3 {
+  hyphens: auto;
+}
