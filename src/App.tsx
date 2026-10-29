@@ -47,6 +47,7 @@ import {
   type Mark,
   type Period,
   type Slot,
+  type Status,
   type Suspension,
   type Teacher,
 } from "./domain";
@@ -512,6 +513,35 @@ function ScheduleForm({
     </Modal>
   );
 }
+function AttendanceSymbol({ status }: { status: Status }) {
+  if (status === "present")
+    return (
+      <Check
+        className="attendance-symbol present"
+        aria-hidden="true"
+        strokeWidth={4}
+      />
+    );
+  if (status === "absent")
+    return (
+      <X
+        className="attendance-symbol absent"
+        aria-hidden="true"
+        strokeWidth={4}
+      />
+    );
+  if (status === "justified")
+    return (
+      <span className="attendance-symbol justified" aria-hidden="true">
+        J
+      </span>
+    );
+  return (
+    <span className={`attendance-symbol ${status}`} aria-hidden="true">
+      {status === "suspended" ? "—" : "·"}
+    </span>
+  );
+}
 function AttendanceGrid({
   data,
   setData,
@@ -521,6 +551,7 @@ function AttendanceGrid({
 }) {
   const scroll = useRef<HTMLDivElement>(null);
   const allWeeks = weeks(data.period);
+  const currentWeek = monday(localToday());
   const [filter, setFilter] = useState("");
   const [focusWeek, setFocusWeek] = useState(() => {
     const today = monday(localToday());
@@ -610,7 +641,7 @@ function AttendanceGrid({
       <div className="section-heading">
         <div>
           <h2>Registro de asistencia</h2>
-          <p>Un encuentro a la vez. Cada semana, en su lugar.</p>
+          <p>Selecciona una casilla para registrar o corregir su asistencia.</p>
         </div>
         <div className={`save-status ${errors ? "failed" : ""}`} role="status">
           {saving ? (
@@ -684,7 +715,7 @@ function AttendanceGrid({
           ["present", "absent", "justified", "suspended", "pending"] as const
         ).map((s) => (
           <span key={s}>
-            <i className={`dot ${s}`} />
+            <AttendanceSymbol status={s} />
             {labels[s]}
           </span>
         ))}
@@ -695,19 +726,24 @@ function AttendanceGrid({
         tabIndex={0}
         aria-label="Cuadrícula de asistencia. Desplázate horizontalmente para ver más semanas."
       >
-        <table className="attendance-table">
+        <table
+          className="attendance-table"
+          data-sessions={data.book.sessions_per_week}
+        >
           <thead>
             <tr>
               <th className="student-column">
-                Estudiante <span>{data.enrollments.length}</span>
+                <strong>ASISTENCIA</strong>
+                <span>{data.enrollments.length} estudiantes</span>
               </th>
               {allWeeks.map((w, i) => (
                 <th
                   key={w}
                   data-week={w}
-                  className={focusWeek === w ? "active-week" : ""}
+                  aria-current={currentWeek === w ? "date" : undefined}
+                  className={currentWeek === w ? "active-week" : ""}
                 >
-                  <span>SEMANA {String(i + 1).padStart(2, "0")}</span>
+                  <span>SEMANA {i + 1}</span>
                   <strong>
                     {shortDate(w)} — {shortDate(addDays(w, 6))}
                   </strong>
@@ -733,20 +769,18 @@ function AttendanceGrid({
               .map((e, i) => (
                 <tr key={e.id}>
                   <th scope="row" className="student-column">
-                    <span className="row-number">
-                      {String(i + 1).padStart(2, "0")}
-                    </span>
-                    <span>
+                    <span className="student-name">
                       {e.full_name}
                       {e.left_on && (
                         <small>Retiro: {shortDate(e.left_on)}</small>
                       )}
                     </span>
+                    <span className="row-number">{i + 1}</span>
                   </th>
                   {allWeeks.map((w) => (
                     <td
                       key={w}
-                      className={focusWeek === w ? "active-week" : ""}
+                      className={currentWeek === w ? "active-week" : ""}
                     >
                       <div className="session-cells">
                         {Array.from(
@@ -773,49 +807,57 @@ function AttendanceGrid({
                                       className="attendance-cell"
                                       key={lesson.date}
                                     >
-                                      <span className="cell-date">
-                                        {shortDate(lesson.date)}
-                                      </span>
                                       {lesson.status === "suspended" ? (
                                         <span
                                           className="suspension-cell"
-                                          title={lesson.reason}
+                                          title={`${shortDate(lesson.date)} · ${lesson.reason}`}
+                                          role="img"
+                                          aria-label={`Suspendida: ${lesson.reason}, ${lesson.date}`}
                                         >
-                                          Suspendida
-                                          <small>{lesson.reason}</small>
+                                          <AttendanceSymbol status="suspended" />
                                         </span>
                                       ) : (
                                         <>
-                                          <select
-                                            aria-label={`${e.full_name}, ${lesson.date}, sesión ${s + 1}`}
-                                            className={`mark ${lesson.status}`}
-                                            value={
-                                              lesson.status === "pending"
-                                                ? ""
-                                                : lesson.status
-                                            }
-                                            disabled={
-                                              saveState?.state === "saving"
-                                            }
-                                            onChange={(event) =>
-                                              void save(
-                                                lesson,
-                                                (event.target.value as Mark) ||
-                                                  null,
-                                              )
-                                            }
+                                          <div
+                                            className={`symbol-control ${lesson.status} ${saveState?.state === "saving" ? "is-saving" : ""}`}
+                                            title={`${e.full_name} · ${lesson.date} · ${labels[lesson.status]}`}
                                           >
-                                            <option value="">Pendiente</option>
-                                            <option value="present">
-                                              Presente
-                                            </option>
-                                            <option value="absent">
-                                              Ausente
-                                            </option>
-                                            <option value="justified">
-                                              Justificada
-                                            </option>
-                                          </select>
+                                            <AttendanceSymbol
+                                              status={lesson.status}
+                                            />
+                                            <select
+                                              aria-label={`${e.full_name}, ${lesson.date}, sesión ${s + 1}`}
+                                              className={`symbol-select mark ${lesson.status}`}
+                                              value={
+                                                lesson.status === "pending"
+                                                  ? ""
+                                                  : lesson.status
+                                              }
+                                              disabled={
+                                                saveState?.state === "saving"
+                                              }
+                                              onChange={(event) =>
+                                                void save(
+                                                  lesson,
+                                                  (event.target
+                                                    .value as Mark) || null,
+                                                )
+                                              }
+                                            >
+                                              <option value="">
+                                                Pendiente
+                                              </option>
+                                              <option value="present">
+                                                Presente
+                                              </option>
+                                              <option value="absent">
+                                                Ausente
+                                              </option>
+                                              <option value="justified">
+                                                Justificada
+                                              </option>
+                                            </select>
+                                          </div>
                                           {saveState?.state === "error" && (
                                             <button
                                               className="retry"
@@ -832,6 +874,9 @@ function AttendanceGrid({
                                           )}
                                         </>
                                       )}
+                                      <span className="cell-date">
+                                        {shortDate(lesson.date)}
+                                      </span>
                                     </div>
                                   );
                                 })}
