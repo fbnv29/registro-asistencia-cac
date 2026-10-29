@@ -1,12 +1,12 @@
 :root {
-  font-family: Arial, Helvetica, sans-serif;
-  color: #293a34;
-  background: #f7f7f2;
+  font-family: "Source Sans 3", Arial, Helvetica, sans-serif;
+  color: #182039;
+  background: #f6f7f9;
   font-synthesis: none;
-  --green: #254d43;
-  --muted: #69716a;
-  --line: #dedfd5;
-  --paper: #fffefb;
+  --green: #182039;
+  --muted: #687080;
+  --line: #dce0e7;
+  --paper: #ffffff;
 }
 * {
   box-sizing: border-box;
@@ -37,7 +37,7 @@ a:focus-visible,
 input:focus-visible,
 select:focus-visible,
 [tabindex]:focus-visible {
-  outline: 3px solid #d69b36;
+  outline: 3px solid #00627e;
   outline-offset: 3px;
 }
 button {
@@ -48,7 +48,7 @@ a {
 }
 .topbar {
   height: 96px;
-  background: #fffefb;
+  background: #ffffff;
   border-bottom: 1px solid var(--line);
   padding: 0 5%;
   display: flex;
@@ -154,7 +154,7 @@ p {
   margin-top: 0;
 }
 h1 {
-  font-family: Georgia, "Times New Roman", serif;
+  font-family: "Libre Baskerville", Georgia, "Times New Roman", serif;
   font-weight: 400;
   font-size: 48px;
   letter-spacing: -1.7px;
@@ -174,71 +174,6 @@ h1 em {
   color: var(--muted);
   margin-bottom: 0;
 }
-.intro-art {
-  width: 290px;
-  height: 205px;
-  position: relative;
-  margin-right: 25px;
-}
-.art-book {
-  position: absolute;
-  left: 90px;
-  top: 25px;
-  width: 116px;
-  height: 134px;
-  color: #537761;
-  transform: rotate(-14deg);
-  display: grid;
-  place-items: center;
-  background: #e7ebdf;
-  border: 1px solid #cbd5bf;
-  border-radius: 12px 24px 24px 12px;
-  box-shadow: 6px 7px 0 #d9dfcf;
-}
-.art-note {
-  position: absolute;
-  left: 46px;
-  top: 37px;
-  width: 24px;
-  height: 24px;
-  transform: rotate(13deg);
-  color: #a48354;
-}
-.orbit {
-  position: absolute;
-  border: 1px solid #dfe3d6;
-  border-radius: 50%;
-  width: 245px;
-  height: 140px;
-  left: 18px;
-  top: 27px;
-  transform: rotate(-22deg);
-}
-.orbit-two {
-  width: 205px;
-  height: 185px;
-  left: 42px;
-  top: 10px;
-  transform: rotate(33deg);
-  border-style: dashed;
-}
-.art-star {
-  position: absolute;
-  left: 224px;
-  top: 13px;
-  color: #bc9960;
-  font-size: 47px;
-}
-.art-caption {
-  position: absolute;
-  bottom: 5px;
-  right: 22px;
-  font:
-    italic 17px Georgia,
-    serif;
-  color: #789079;
-  transform: rotate(-5deg);
-}
 .library {
   padding-top: 34px;
 }
@@ -250,7 +185,8 @@ h1 em {
 }
 .library-heading h2 {
   font:
-    400 27px Georgia,
+    400 27px "Libre Baskerville",
+    Georgia,
     serif;
   letter-spacing: -0.5px;
   margin-bottom: 8px;
@@ -279,7 +215,7 @@ h1 em {
   padding: 12px 18px;
   border: 1px solid #d6d9cf;
   border-radius: 7px;
-  background: #fffefb;
+  background: #ffffff;
   font-size: 15px;
   font-weight: 500;
   min-height: 44px;
@@ -294,7 +230,7 @@ h1 em {
   border-color: var(--green);
 }
 .button.primary:hover {
-  background: #183d33;
+  background: #00627e;
 }
 .button.small {
   padding: 8px 12px;
@@ -331,8 +267,8 @@ h1 em {
   display: flex;
   align-items: center;
   gap: 8px;
-  background: #fffefb;
-  border: 1px solid #dedfd5;
+  background: #ffffff;
+  border: 1px solid #dce0e7;
   border-radius: 7px;
   padding: 0 11px;
   min-width: 260px;
@@ -361,27 +297,27 @@ h1 em {
   padding: 0 0 44px;
   transition: transform 0.18s;
   width: 100%;
-  --cover: #305a4c;
-  --ink: #f4f2de;
-  --accent: #b8c5a3;
+  --cover: #00627e;
+  --ink: #ffffff;
+  --accent: #a8cbd4;
 }
 .book-card:hover {
   transform: translateY(-5px);
 }
 .palette-1 {
-  --cover: #ac745a;
-  --ink: #fff6e7;
-  --accent: #e3b99d;
+  --cover: #66215d;
+  --ink: #ffffff;
+  --accent: #d4b5cf;
 }
 .palette-2 {
-  --cover: #586a80;
-  --ink: #f5f3e8;
-  --accent: #b8c6d4;
+  --cover: #182039;
+  --ink: #ffffff;
+  --accent: #b3bad1;
 }
 .palette-3 {
-  --cover: #847847;
-  --ink: #fff9df;
-  --accent: #c9c299;
+  --cover: #b21b59;
+  --ink: #ffffff;
+  --accent: #e5b9cc;
 }
 .book-cover {
   background: var(--cover);
@@ -441,7 +377,8 @@ h1 em {
 }
 .book-cover h3 {
   font:
-    400 30px/1.15 Georgia,
+    400 30px/1.15 "Libre Baskerville",
+    Georgia,
     serif;
   position: relative;
   z-index: 2;
@@ -511,14 +448,14 @@ h1 em {
   display: flex;
   align-items: center;
   gap: 18px;
-  border: 1px solid #dce0d1;
+  border: 1px solid #dbe3eb;
   border-radius: 8px;
-  background: #eeeee3;
+  background: #edf2f6;
   padding: 22px 26px;
   margin-bottom: 42px;
 }
 .note-icon {
-  color: #6e8265;
+  color: #00627e;
 }
 .home-note strong {
   font-size: 14px;
@@ -581,15 +518,16 @@ h1 em {
 }
 .modal h2 {
   font:
-    27px Georgia,
+    27px "Libre Baskerville",
+    Georgia,
     serif;
   margin: 0;
 }
 .icon-button {
   display: inline-grid;
   place-items: center;
-  border: 1px solid #dedfd5;
-  background: #fffefb;
+  border: 1px solid #dce0e7;
+  background: #ffffff;
   border-radius: 6px;
   width: 40px;
   min-width: 40px;
@@ -718,13 +656,13 @@ h1 em {
 .book-title-icon {
   width: 76px;
   height: 87px;
-  background: #e2e8da;
-  border: 1px solid #d3ddca;
+  background: #e4edf2;
+  border: 1px solid #d0dde5;
   display: grid;
   place-items: center;
   border-radius: 5px 14px 14px 5px;
   color: var(--green);
-  box-shadow: -5px 0 0 #ccd7bd;
+  box-shadow: -5px 0 0 #c1d4df;
 }
 .book-title h1 {
   font-size: 40px;
@@ -768,7 +706,7 @@ h1 em {
   border-bottom-color: var(--green);
 }
 .book-sheet {
-  background: #fffefa;
+  background: #ffffff;
   border: 1px solid #dce0d2;
   border-top: 0;
   padding: 28px 26px 18px;
@@ -783,7 +721,8 @@ h1 em {
 }
 .section-heading h2 {
   font:
-    26px Georgia,
+    26px "Libre Baskerville",
+    Georgia,
     serif;
   margin-bottom: 8px;
 }
@@ -822,7 +761,7 @@ h1 em {
 .week-nav select {
   max-width: 230px;
   border: 1px solid #dce0d2;
-  background: #fffefb;
+  background: #ffffff;
   border-radius: 6px;
   padding: 10px;
   font-size: 13px;
@@ -874,7 +813,7 @@ h1 em {
   border-spacing: 0;
   width: max-content;
   min-width: 100%;
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: "Source Sans 3", Arial, Helvetica, sans-serif;
 }
 .attendance-table[data-sessions="1"] {
   --slot-width: 152px;
@@ -930,7 +869,7 @@ h1 em {
   z-index: 5;
   padding: 12px 15px;
   text-align: left;
-  background: #254d43;
+  background: #182039;
   color: #fff;
 }
 .attendance-table thead .student-column > strong {
@@ -1027,10 +966,10 @@ h1 em {
   place-items: center;
 }
 .symbol-control:hover {
-  background: #254d4309;
+  background: #18203909;
 }
 .symbol-control:focus-within {
-  outline: 3px solid #d69b36;
+  outline: 3px solid #00627e;
   outline-offset: -3px;
   background: #fff9e8;
 }
@@ -1044,17 +983,17 @@ h1 em {
   height: 34px;
 }
 .attendance-symbol.present {
-  color: #638f55;
-  filter: drop-shadow(0 1px 0 #4f7545);
+  color: #54836d;
+  filter: drop-shadow(0 1px 0 #476f5d);
 }
 .attendance-symbol.absent {
-  color: #b86c55;
+  color: #bd5137;
 }
 .attendance-symbol.justified {
   width: 27px;
   height: 27px;
-  border: 2px solid #b49a58;
-  color: #9c8246;
+  border: 2px solid #a98e24;
+  color: #8a7217;
   border-radius: 50%;
   font-size: 17px;
   font-weight: 700;
@@ -1099,17 +1038,17 @@ h1 em {
   background: transparent;
 }
 .attendance-table thead th.active-week {
-  background: #e8eddc;
+  background: #e2eef2;
   box-shadow:
-    inset 1px 0 #d9e2c9,
-    inset -1px 0 #d9e2c9;
+    inset 1px 0 #c5dbe3,
+    inset -1px 0 #c5dbe3;
 }
 .attendance-table tbody td.active-week,
 .attendance-table tbody tr:nth-child(odd) td.active-week {
-  background: #f3f6eb;
+  background: #f0f6f8;
   box-shadow:
-    inset 1px 0 #e2e8d5,
-    inset -1px 0 #e2e8d5;
+    inset 1px 0 #dce9ee,
+    inset -1px 0 #dce9ee;
 }
 .no-session {
   display: grid;
@@ -1166,9 +1105,10 @@ h1 em {
 }
 .empty-state h3 {
   font:
-    24px Georgia,
+    24px "Libre Baskerville",
+    Georgia,
     serif;
-  color: #526849;
+  color: #182039;
   margin: 15px 0 8px;
 }
 .empty-state p {
@@ -1187,12 +1127,13 @@ h1 em {
   height: 40px;
   display: grid;
   place-items: center;
-  background: #e9eedf;
+  background: #eaf0f4;
   border-radius: 8px;
   font:
-    20px Georgia,
+    20px "Libre Baskerville",
+    Georgia,
     serif;
-  color: #58724d;
+  color: #00627e;
   flex-shrink: 0;
 }
 .student-list > div > div {
@@ -1216,8 +1157,8 @@ h1 em {
   padding-bottom: 15px;
 }
 .schedule-grid > section {
-  background: #f4f5ed;
-  border: 1px solid #e1e6d6;
+  background: #f3f5f8;
+  border: 1px solid #dce2e9;
   border-radius: 7px;
   padding: 10px;
   min-height: 200px;
@@ -1234,15 +1175,15 @@ h1 em {
   gap: 8px;
   text-align: left;
   width: 100%;
-  background: #fffefb;
-  border: 1px solid #dce3d1;
+  background: #ffffff;
+  border: 1px solid #d7e1e7;
   border-radius: 5px;
   padding: 12px 8px;
   margin-bottom: 10px;
 }
 .schedule-grid button strong {
   font-size: 13px;
-  color: #416e47;
+  color: #00627e;
 }
 .schedule-grid button span {
   font-size: 12px;
@@ -1268,7 +1209,7 @@ h1 em {
 }
 .stats > div {
   padding: 18px;
-  background: #f2f4e9;
+  background: #f0f3f7;
   border: 1px solid #e2e6d6;
   border-radius: 7px;
 }
@@ -1280,9 +1221,10 @@ h1 em {
 }
 .stats strong {
   font:
-    25px Georgia,
+    25px "Libre Baskerville",
+    Georgia,
     serif;
-  color: #46603c;
+  color: #182039;
 }
 .table-scroll {
   overflow-x: auto;
@@ -1301,7 +1243,7 @@ h1 em {
 }
 .plain-table thead th {
   font-size: 12px;
-  background: #edf1e2;
+  background: #edf1f6;
   color: #6a7b5c;
 }
 .plain-table tbody th {
@@ -1315,7 +1257,7 @@ h1 em {
   margin-top: 10px;
 }
 .admin-card {
-  background: #fffefb;
+  background: #ffffff;
   border: 1px solid #dce0d2;
   padding: 30px;
   border-radius: 0 0 10px 10px;
@@ -1325,12 +1267,14 @@ h1 em {
 }
 .admin-card h2 {
   font:
-    28px Georgia,
+    28px "Libre Baskerville",
+    Georgia,
     serif;
 }
 .admin-card h3 {
   font:
-    22px Georgia,
+    22px "Libre Baskerville",
+    Georgia,
     serif;
   margin-top: 35px;
 }
@@ -1364,9 +1308,9 @@ h1 em {
   display: flex;
   align-items: center;
   gap: 7px;
-  background: #eaf2e2;
-  color: #4e7341;
-  border: 1px solid #cfdfbf;
+  background: #edf4f2;
+  color: #376c5d;
+  border: 1px solid #c8ded6;
   padding: 12px;
   border-radius: 6px;
 }
@@ -1856,4 +1800,296 @@ h1 em {
     width: 30px;
     height: 30px;
   }
+}
+
+/* CAC identity: original artwork, white monochrome presentation on dark surfaces. */
+.topbar {
+  height: 116px;
+  background: #182039;
+  border-bottom: 0;
+}
+.brand {
+  gap: 24px;
+}
+.monochrome-logo {
+  filter: grayscale(1) brightness(0.6) contrast(40) invert(1);
+  mix-blend-mode: screen;
+  object-fit: contain;
+}
+.cac-logo {
+  width: 96px;
+  height: 96px;
+  display: block;
+}
+.brand-caption {
+  color: #fff;
+  border-left: 1px solid #ffffff35;
+  padding-left: 24px;
+  font-size: 17px;
+  font-weight: 400;
+  letter-spacing: 0.3px;
+}
+.topbar .admin-link {
+  color: #ffffffcf;
+  font-size: 15px;
+}
+.topbar .button {
+  background: #ffffff0d;
+  color: #fff;
+  border-color: #ffffff40;
+}
+.topbar .button:hover {
+  background: #ffffff1c;
+}
+.topbar .demo-badge {
+  color: #e9d981;
+  background: #e5c51c14;
+  border-color: #e5c51c40;
+}
+.home {
+  padding-top: 38px;
+}
+.home-intro {
+  min-height: 0;
+  padding-bottom: 30px;
+}
+.home-intro .eyebrow {
+  color: #00627e;
+  font-size: 11px;
+  letter-spacing: 1.5px;
+}
+.home h1 {
+  margin-top: 16px;
+  font-size: 38px;
+  letter-spacing: -1.2px;
+  font-weight: 700;
+}
+.home-intro p {
+  color: #687080;
+  font-size: 17px;
+}
+.library {
+  padding-top: 28px;
+}
+.library-heading h2 {
+  font-size: 23px;
+  color: #182039;
+}
+.library-heading h2 > span {
+  background: #e6edf2;
+  color: #00627e;
+}
+.filter-label {
+  color: #00627e;
+}
+.filter-label:after {
+  background: #00627e;
+}
+.book-cover {
+  min-height: 290px;
+  padding-top: 20px;
+}
+.cover-top {
+  gap: 12px;
+  margin-bottom: 23px;
+}
+.cover-logo {
+  height: 70px;
+  width: 70px;
+  flex-shrink: 0;
+}
+.cover-top > span {
+  font-family: "Source Sans 3", sans-serif;
+  font-size: 9px;
+  letter-spacing: 1.4px;
+  font-weight: 600;
+  margin-right: auto;
+}
+.cover-top > svg {
+  flex-shrink: 0;
+}
+.book-cover h3 {
+  font-size: 27px;
+  font-weight: 700;
+  line-height: 1.3;
+}
+.book-cover > p {
+  font-family: "Source Sans 3", sans-serif;
+  font-size: 15px;
+}
+.cover-bottom {
+  font-size: 11px;
+}
+.cover-decoration {
+  opacity: 0.5;
+}
+.book-open {
+  color: #00627e;
+  font-size: 14px;
+}
+.home-note {
+  background: #edf2f6;
+  border-color: #d8e2e9;
+}
+.home-note strong {
+  color: #182039;
+  font-weight: 600;
+  font-size: 16px;
+}
+.home-note p {
+  color: #687080;
+  font-size: 14px;
+}
+.footer {
+  color: #788294;
+}
+.footer > span:first-child {
+  color: #4e5c72;
+}
+.book-title-icon {
+  color: #00627e;
+  background: #e5eff3;
+  border-color: #d0e0e7;
+  box-shadow: -5px 0 0 #c7dce5;
+}
+.book-title h1 {
+  color: #182039;
+  font-weight: 700;
+  font-size: 34px;
+}
+.eyebrow,
+.back-link {
+  color: #62758a;
+}
+.button.primary {
+  background: #00627e;
+  border-color: #00627e;
+}
+.button.primary:hover {
+  background: #004d65;
+}
+.book-tabs > button.selected {
+  color: #00627e;
+  border-bottom-color: #00627e;
+}
+.book-tabs > button {
+  color: #67758a;
+}
+.attendance-table thead .student-column {
+  background: #182039;
+}
+.attendance-table thead th.active-week {
+  background: #e2eef2;
+  box-shadow:
+    inset 1px 0 #cbdfe7,
+    inset -1px 0 #cbdfe7;
+}
+.attendance-table tbody td.active-week,
+.attendance-table tbody tr:nth-child(odd) td.active-week {
+  background: #f0f6f8;
+  box-shadow:
+    inset 1px 0 #dce9ee,
+    inset -1px 0 #dce9ee;
+}
+.stats strong {
+  color: #182039;
+}
+.stats span,
+.plain-table thead th {
+  color: #51657e;
+}
+.field {
+  color: #34445d;
+}
+.field input,
+.field select {
+  color: #182039;
+  border-color: #cbd4df;
+}
+@media (max-width: 1000px) {
+  .home h1 {
+    font-size: 35px;
+  }
+  .cover-top {
+    gap: 8px;
+  }
+  .cover-logo {
+    width: 60px;
+    height: 60px;
+  }
+  .cover-top > span {
+    font-size: 8px;
+    letter-spacing: 0.7px;
+  }
+}
+@media (max-width: 700px) {
+  .topbar {
+    height: 96px;
+    padding: 0 16px;
+  }
+  .cac-logo {
+    height: 78px;
+    width: 78px;
+  }
+  .brand {
+    gap: 12px;
+  }
+  .brand-caption {
+    display: none;
+  }
+  .topbar .top-actions {
+    gap: 10px;
+  }
+  .home {
+    padding-top: 29px;
+  }
+  .home h1 {
+    font-size: 29px;
+  }
+  .home-intro .eyebrow {
+    font-size: 9px;
+    letter-spacing: 1px;
+  }
+  .home-intro p {
+    font-size: 16px;
+  }
+  .library-heading h2 {
+    font-size: 21px;
+  }
+  .book-cover {
+    min-height: 280px;
+  }
+  .cover-top {
+    flex-wrap: wrap;
+    margin-bottom: 18px;
+    gap: 5px;
+  }
+  .cover-top > span {
+    order: 3;
+    flex-basis: 100%;
+    font-size: 8px;
+  }
+  .cover-top > svg {
+    margin-left: auto;
+  }
+  .cover-logo {
+    width: 62px;
+    height: 62px;
+  }
+  .book-cover h3 {
+    font-size: 20px;
+  }
+  .book-cover > p {
+    font-size: 12px;
+  }
+  .cover-bottom {
+    font-size: 10px;
+  }
+  .book-title h1 {
+    font-size: 26px;
+  }
+}
+/* Blend the logo's black matte at the cover group level as well. */
+.cover-top {
+  mix-blend-mode: screen;
 }

@@ -20,11 +20,9 @@ import {
   ChevronRight,
   Check,
   X,
-  Music2,
   Search,
   Download,
   Clock3,
-  Flower2,
   ShieldCheck,
   Pencil,
   CircleHelp,
@@ -278,9 +276,7 @@ function CreateBook({
 }) {
   return (
     <Modal title="Un nuevo libro de clases" onClose={onClose}>
-      <p className="muted">
-        Un espacio para tu disciplina, tus estudiantes y cada encuentro.
-      </p>
+      <p className="muted">Completa los datos para crear el libro de clases.</p>
       {!catalog.teachers.length || !catalog.periods.length ? (
         <Alert>
           Administración debe agregar profesores y un período lectivo antes de
@@ -1118,7 +1114,7 @@ function BookView({
       </button>
       <div className="book-title">
         <div className="book-title-icon">
-          <Music2 size={31} />
+          <BookOpen size={31} />
         </div>
         <div>
           <span className="eyebrow">LIBRO DE CLASES · {data.period.name}</span>
@@ -1326,7 +1322,7 @@ function Admin({
         <div>
           <span className="eyebrow">CENTRO ARTÍSTICO CAC</span>
           <h1>Administración</h1>
-          <p>Períodos, profesores y días de encuentro.</p>
+          <p>Profesores, períodos lectivos y suspensiones.</p>
         </div>
         <ShieldCheck size={40} />
       </div>
@@ -1705,16 +1701,12 @@ export default function App() {
             window.location.hash = "";
           }}
         >
-          <span className="brand-mark">
-            <Flower2 size={30} />
-          </span>
-          <span>
-            <strong>
-              CAC<span className="brand-divider">/</span>
-              <span className="brand-name">Centro Artístico</span>
-            </strong>
-            <small>UN ESPACIO PARA CRECER</small>
-          </span>
+          <img
+            className="cac-logo monochrome-logo"
+            src="/brand/cac-original.jpg"
+            alt="CAC · Centro Artístico Cultural Concepción"
+          />
+          <span className="brand-caption">Registro de asistencia</span>
         </a>
         <div className="top-actions">
           {catalog?.environment !== "production" && catalog && (
@@ -1754,33 +1746,19 @@ export default function App() {
           <section className="home-intro">
             <div>
               <div className="eyebrow">
-                <span className="tiny-line" /> NUESTRO REGISTRO, CADA ENCUENTRO
+                CENTRO ARTÍSTICO CULTURAL CONCEPCIÓN
               </div>
-              <h1>
-                El arte de estar <em>presentes.</em>
-              </h1>
+              <h1>Libros de clases</h1>
               <p>
-                Bienvenido a tus libros de clases.
-                <br />
-                Un lugar para acompañar el aprendizaje, semana a semana.
+                Consulta tus cursos y registra la asistencia de cada semana.
               </p>
-            </div>
-            <div className="intro-art" aria-hidden="true">
-              <div className="orbit orbit-one" />
-              <div className="orbit orbit-two" />
-              <Music2 className="art-note" />
-              <div className="art-book">
-                <BookOpen size={76} />
-              </div>
-              <span className="art-star">✳</span>
-              <span className="art-caption">Cada encuentro cuenta.</span>
             </div>
           </section>
           <section className="library">
             <div className="library-heading">
               <div>
                 <h2>
-                  Libros de clases <span>{catalog.books.length}</span>
+                  Cursos y talleres <span>{catalog.books.length}</span>
                 </h2>
                 <p>Elige tu libro para registrar la asistencia.</p>
               </div>
@@ -1825,19 +1803,13 @@ export default function App() {
                     <div className="book-spine" />
                     <div className="book-cover">
                       <div className="cover-top">
-                        <span>
-                          CAC <span>LIBRO DE CLASES</span>
-                        </span>
+                        <img
+                          className="cover-logo monochrome-logo"
+                          src="/brand/cac-original.jpg"
+                          alt="CAC"
+                        />
+                        <span>LIBRO DE CLASES</span>
                         <LockKeyhole size={17} />
-                      </div>
-                      <div className="cover-icon">
-                        {i % 3 === 0 ? (
-                          <Music2 size={33} />
-                        ) : i % 3 === 1 ? (
-                          <Flower2 size={35} />
-                        ) : (
-                          <BookOpen size={33} />
-                        )}
                       </div>
                       <h3>{b.discipline}</h3>
                       <p>{b.teacher_name}</p>
@@ -1862,7 +1834,7 @@ export default function App() {
             {!catalog.books.length && (
               <div className="empty-state">
                 <BookOpen size={34} />
-                <h3>Los primeros encuentros comienzan aquí</h3>
+                <h3>No hay libros registrados</h3>
                 <p>
                   Administración puede agregar profesores y períodos. Luego,
                   cada profesor crea su libro.
@@ -1885,15 +1857,12 @@ export default function App() {
               <ShieldCheck size={24} />
             </span>
             <div>
-              <strong>Tu libro, cuidado y protegido.</strong>
+              <strong>Acceso a los libros</strong>
               <p>
                 Ingresa con tu contraseña. Si necesitas ayuda, acércate a
                 administración.
               </p>
             </div>
-            <span className="note-flower" aria-hidden="true">
-              ✳
-            </span>
           </aside>
         </main>
       )}
@@ -1917,8 +1886,7 @@ export default function App() {
         />
       )}
       <footer className="footer">
-        <span>CAC · Centro Artístico</span>
-        <span>Hecho para acompañar cada encuentro.</span>
+        <span>Centro Artístico Cultural Concepción</span>
         <span>Registro de asistencia</span>
       </footer>
       {dialog && (

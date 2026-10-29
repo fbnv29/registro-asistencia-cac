@@ -533,7 +533,7 @@ export async function handleApi(
             header.fill = {
               type: "pattern",
               pattern: "solid",
-              fgColor: { argb: "FF254D43" },
+              fgColor: { argb: "FF182039" },
             };
           }
           const buffer = await workbook.xlsx.writeBuffer();
