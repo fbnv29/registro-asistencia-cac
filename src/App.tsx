@@ -38,6 +38,8 @@ import {
   shortDate,
   summarize,
   weeks,
+  isRetired,
+  vacantSlots,
   type Book,
   type BookData,
   type Enrollment,
@@ -358,8 +360,10 @@ function StudentForm({
   student,
   onClose,
   onDone,
+  canRetire = false,
 }: {
   data: BookData;
+  canRetire?: boolean;
   student?: Enrollment;
   onClose: () => void;
   onDone: () => void;
@@ -380,7 +384,7 @@ function StudentForm({
             joined_on:
               student?.joined_on ||
               (fromStart ? data.period.start_date : f.get("joined_on")),
-            left_on: f.get("left_on") || null,
+            ...(canRetire ? { left_on: f.get("left_on") || null } : {}),
             ...(!student
               ? { slots: readSlots(f, data.book.sessions_per_week) }
               : {}),
@@ -436,18 +440,23 @@ function StudentForm({
               Ingreso: {shortDate(student.joined_on)}. El historial permanece en
               el libro.
             </p>
-            <Field label="Último día de asistencia (opcional)">
-              <input
-                type="date"
-                name="left_on"
-                min={student.joined_on}
-                max={data.period.end_date}
-                defaultValue={student.left_on || ""}
-              />
-            </Field>
-            <p className="hint">
-              Deja la fecha vacía si continúa en el taller.
-            </p>
+            {canRetire && (
+              <>
+                <Field label="Fecha de retiro (opcional)">
+                  <input
+                    type="date"
+                    name="left_on"
+                    min={student.joined_on}
+                    max={data.period.end_date}
+                    defaultValue={student.left_on || ""}
+                  />
+                </Field>
+                <p className="hint">
+                  El retiro conserva su historial y libera el horario. Deja la
+                  fecha vacía si continúa en el taller.
+                </p>
+              </>
+            )}
           </>
         )}
       </SubmitForm>
@@ -1049,17 +1058,22 @@ function BookView({
   onBack,
   access,
   onAdmin,
+  initialTab = "attendance",
+  embedded = false,
 }: {
   bookId: string;
+  initialTab?: string;
+  embedded?: boolean;
   onBack: () => void;
   access: Access | null;
   onAdmin: () => void;
 }) {
   const [data, setData] = useState<BookData | null>(null),
     [error, setError] = useState(""),
-    [tab, setTab] = useState("attendance"),
+    [tab, setTab] = useState(initialTab),
     [studentModal, setStudentModal] = useState<Enrollment | "new" | null>(null),
     [scheduleModal, setScheduleModal] = useState<Enrollment | null>(null),
+    [studentList, setStudentList] = useState("active"),
     [scheduleDate, setScheduleDate] = useState(localToday());
   const refresh = () =>
     api<BookData>(`/books/${bookId}`)
@@ -1085,10 +1099,12 @@ function BookView({
   }
   if (!data)
     return (
-      <main className="container">
-        <button className="button" onClick={onBack}>
-          <ArrowLeft /> Volver
-        </button>
+      <div className={embedded ? "admin-workspace-book" : "container"}>
+        {!embedded && (
+          <button className="button" onClick={onBack}>
+            <ArrowLeft /> Volver
+          </button>
+        )}
         {error ? (
           <>
             <Alert>{error}</Alert>
@@ -1099,7 +1115,7 @@ function BookView({
         ) : (
           <p>Cargando tu libro…</p>
         )}
-      </main>
+      </div>
     );
   const tabs = [
     ["attendance", "Asistencia", ClipboardCheck],
@@ -1107,11 +1123,18 @@ function BookView({
     ["students", "Estudiantes", Users],
     ["reports", "Resumen", ChartNoAxesCombined],
   ] as const;
+  const Container = embedded ? "div" : "main";
   return (
-    <main className="container book-page">
-      <button className="back-link" onClick={onBack}>
-        <ArrowLeft size={17} /> Todos los libros
-      </button>
+    <Container
+      className={
+        embedded ? "admin-workspace-book book-page" : "container book-page"
+      }
+    >
+      {!embedded && (
+        <button className="back-link" onClick={onBack}>
+          <ArrowLeft size={17} /> Todos los libros
+        </button>
+      )}
       <div className="book-title">
         <div className="book-title-icon">
           <BookOpen size={31} />
@@ -1133,20 +1156,22 @@ function BookView({
           <Plus size={19} /> Agregar estudiante
         </button>
       </div>
-      <div className="book-tabs" role="tablist" aria-label="Hojas del libro">
-        {tabs.map(([key, label, Icon]) => (
-          <button
-            role="tab"
-            aria-selected={tab === key}
-            key={key}
-            onClick={() => setTab(key)}
-            className={tab === key ? "selected" : ""}
-          >
-            <Icon size={19} />
-            {label}
-          </button>
-        ))}
-      </div>
+      {!embedded && (
+        <div className="book-tabs" role="tablist" aria-label="Hojas del libro">
+          {tabs.map(([key, label, Icon]) => (
+            <button
+              role="tab"
+              aria-selected={tab === key}
+              key={key}
+              onClick={() => setTab(key)}
+              className={tab === key ? "selected" : ""}
+            >
+              <Icon size={19} />
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
       <section
         className="book-sheet"
         role="tabpanel"
@@ -1162,34 +1187,80 @@ function BookView({
             <div className="section-heading">
               <div>
                 <h2>Estudiantes del libro</h2>
-                <p>El historial de quienes se retiran permanece aquí.</p>
+                <p>
+                  {access?.kind === "admin"
+                    ? "Administra las matrículas y conserva el historial de retiros."
+                    : "Estudiantes activos de este curso."}
+                </p>
               </div>
             </div>
+            {access?.kind === "admin" && (
+              <div
+                className="student-status-tabs"
+                role="group"
+                aria-label="Estado de matrícula"
+              >
+                {[
+                  ["active", "Activos"],
+                  ["retired", "Retirados"],
+                  ["all", "Todos"],
+                ].map(([key, label]) => (
+                  <button
+                    className={studentList === key ? "selected" : ""}
+                    aria-pressed={studentList === key}
+                    key={key}
+                    onClick={() => setStudentList(key)}
+                  >
+                    {label}{" "}
+                    <span>
+                      {
+                        data.enrollments.filter(
+                          (e) =>
+                            key === "all" ||
+                            (key === "retired" ? isRetired(e) : !isRetired(e)),
+                        ).length
+                      }
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
             <div className="student-list">
-              {data.enrollments.map((e) => (
-                <div key={e.id}>
-                  <span className="avatar">{e.full_name[0]}</span>
-                  <div>
-                    <strong>{e.full_name}</strong>
-                    <small>
-                      Desde {shortDate(e.joined_on)}
-                      {e.left_on ? ` · Retiro ${shortDate(e.left_on)}` : ""}
-                    </small>
+              {data.enrollments
+                .filter(
+                  (e) =>
+                    access?.kind !== "admin" ||
+                    studentList === "all" ||
+                    (studentList === "retired" ? isRetired(e) : !isRetired(e)),
+                )
+                .map((e) => (
+                  <div key={e.id}>
+                    <span className="avatar">{e.full_name[0]}</span>
+                    <div>
+                      <strong>{e.full_name}</strong>
+                      {isRetired(e) && (
+                        <span className="retired-badge">Retirado</span>
+                      )}
+                      <small>
+                        Desde {shortDate(e.joined_on)}
+                        {e.left_on ? ` · Retiro ${shortDate(e.left_on)}` : ""}
+                      </small>
+                    </div>
+                    <button
+                      className="button small"
+                      onClick={() => setStudentModal(e)}
+                    >
+                      <Pencil size={16} />{" "}
+                      {access?.kind === "admin" ? "Editar / retiro" : "Editar"}
+                    </button>
+                    <button
+                      className="button small"
+                      onClick={() => setScheduleModal(e)}
+                    >
+                      <Clock3 size={16} /> Horario
+                    </button>
                   </div>
-                  <button
-                    className="button small"
-                    onClick={() => setStudentModal(e)}
-                  >
-                    <Pencil size={16} /> Editar
-                  </button>
-                  <button
-                    className="button small"
-                    onClick={() => setScheduleModal(e)}
-                  >
-                    <Clock3 size={16} /> Horario
-                  </button>
-                </div>
-              ))}
+                ))}
             </div>
             {!data.enrollments.length && (
               <p className="empty-state">
@@ -1226,7 +1297,7 @@ function BookView({
                     .filter(
                       (e) =>
                         e.joined_on <= scheduleDate &&
-                        (!e.left_on || e.left_on >= scheduleDate),
+                        !isRetired(e, scheduleDate),
                     )
                     .flatMap((e) => {
                       const version = data.schedules
@@ -1250,6 +1321,19 @@ function BookView({
                         <small>{data.book.duration_minutes} minutos</small>
                       </button>
                     ))}
+                  {access?.kind === "admin" &&
+                    vacantSlots(data, scheduleDate)
+                      .filter((slot) => slot.day === index)
+                      .map((slot) => (
+                        <div
+                          className="available-slot"
+                          key={`free/${slot.time}`}
+                        >
+                          <strong>{slot.time}</strong>
+                          <span>Disponible</span>
+                          <small>Cupo liberado</small>
+                        </div>
+                      ))}
                 </section>
               ))}
             </div>
@@ -1260,7 +1344,7 @@ function BookView({
           </>
         )}
       </section>
-      {access?.kind === "admin" && (
+      {!embedded && access?.kind === "admin" && (
         <button className="back-link" onClick={onAdmin}>
           <Settings size={16} /> Administrar este libro y sus suspensiones
         </button>
@@ -1268,6 +1352,7 @@ function BookView({
       {studentModal && (
         <StudentForm
           data={data}
+          canRetire={access?.kind === "admin"}
           student={studentModal === "new" ? undefined : studentModal}
           onClose={() => setStudentModal(null)}
           onDone={() => void done()}
@@ -1281,9 +1366,285 @@ function BookView({
           onDone={() => void done()}
         />
       )}
-    </main>
+    </Container>
   );
 }
+function AdminWorkspace({ catalog, mode }: { catalog: Catalog; mode: string }) {
+  const [periodId, setPeriodId] = useState(catalog.periods[0]?.id || "");
+  const period = catalog.periods.find((p) => p.id === periodId);
+  const [from, setFrom] = useState(period?.start_date || localToday());
+  const [to, setTo] = useState(
+    period
+      ? localToday() < period.start_date
+        ? period.start_date
+        : localToday() > period.end_date
+          ? period.end_date
+          : localToday()
+      : localToday(),
+  );
+  const [selected, setSelected] = useState("");
+  const [detail, setDetail] = useState("");
+  const [books, setBooks] = useState<BookData[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  async function load() {
+    setLoading(true);
+    setError("");
+    try {
+      const result = await api<{ books: BookData[] }>("/admin/overview");
+      setBooks(result.books);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setLoading(false);
+    }
+  }
+  useEffect(() => {
+    if (mode === "overview") void load();
+  }, [mode]);
+  const available = catalog.books.filter((b) => b.period_id === periodId);
+  const selectedId = available.some((b) => b.id === selected)
+    ? selected
+    : available[0]?.id;
+  const data = books.filter((b) => b.period.id === periodId);
+  const allLessons = data.flatMap((d) => lessonsFor(d, from, to));
+  const totals = summarize(allLessons);
+  const active = data.reduce(
+    (n, d) => n + d.enrollments.filter((e) => !isRetired(e)).length,
+    0,
+  );
+  const retired = data.reduce(
+    (n, d) => n + d.enrollments.filter((e) => isRetired(e)).length,
+    0,
+  );
+  return (
+    <div className="admin-workspace">
+      <div className="workspace-heading">
+        <div>
+          <h2>
+            {mode === "overview"
+              ? "Asistencia del centro"
+              : mode === "schedules"
+                ? "Horarios de los cursos"
+                : "Listas de estudiantes"}
+          </h2>
+          <p className="muted">
+            {mode === "overview"
+              ? "Resumen de todos los libros del período, incluyendo el historial de estudiantes retirados."
+              : mode === "schedules"
+                ? "Selecciona un curso para consultar su distribución semanal y los cupos liberados."
+                : "Edita fichas, horarios y retiros desde administración."}
+          </p>
+        </div>
+        <Field label="Período lectivo">
+          <select
+            value={periodId}
+            onChange={(e) => {
+              setPeriodId(e.target.value);
+              const p = catalog.periods.find((p) => p.id === e.target.value)!;
+              setFrom(p.start_date);
+              setTo(
+                localToday() < p.start_date
+                  ? p.start_date
+                  : localToday() > p.end_date
+                    ? p.end_date
+                    : localToday(),
+              );
+              setDetail("");
+            }}
+          >
+            {catalog.periods.map((p) => (
+              <option value={p.id} key={p.id}>
+                {p.name}
+              </option>
+            ))}
+          </select>
+        </Field>
+      </div>
+      {mode === "overview" ? (
+        <>
+          <div className="overview-toolbar">
+            <div className="report-dates">
+              <Field label="Desde">
+                <input
+                  type="date"
+                  value={from}
+                  min={period?.start_date}
+                  max={to}
+                  onChange={(e) => setFrom(e.target.value)}
+                />
+              </Field>
+              <Field label="Hasta">
+                <input
+                  type="date"
+                  value={to}
+                  min={from}
+                  max={period?.end_date}
+                  onChange={(e) => setTo(e.target.value)}
+                />
+              </Field>
+            </div>
+            <button
+              className="button small"
+              onClick={() => void load()}
+              disabled={loading}
+            >
+              {loading ? "Cargando…" : "Actualizar resumen"}
+            </button>
+          </div>
+          {error && <Alert>{error}</Alert>}
+          {loading && <p role="status">Cargando asistencia de los cursos…</p>}
+          {!loading && !error && (
+            <>
+              <div className="overview-counts">
+                <span>
+                  <strong>{data.length}</strong> libros
+                </span>
+                <span>
+                  <strong>{active}</strong> matrículas activas
+                </span>
+                <span>
+                  <strong>{retired}</strong> retiradas, con historial
+                </span>
+              </div>
+              <div className="stats">
+                {[
+                  [
+                    "Asistencia",
+                    totals.percentage === null
+                      ? "Sin registros"
+                      : `${totals.percentage}%`,
+                  ],
+                  ["Presentes", totals.present],
+                  ["Justificadas", totals.justified],
+                  ["Ausentes", totals.absent],
+                  ["Pendientes", totals.pending],
+                  ["Suspendidas", totals.suspended],
+                ].map(([label, value]) => (
+                  <div key={label}>
+                    <span>{label}</span>
+                    <strong>{value}</strong>
+                  </div>
+                ))}
+              </div>
+              <div className="table-scroll">
+                <table className="plain-table overview-table">
+                  <thead>
+                    <tr>
+                      <th>Curso / profesor</th>
+                      <th>Activos</th>
+                      <th>Retirados</th>
+                      <th>Presentes</th>
+                      <th>Ausentes</th>
+                      <th>Justificadas</th>
+                      <th>Pendientes</th>
+                      <th>Asistencia</th>
+                      <th>Detalle</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.map((d) => {
+                      const summary = summarize(lessonsFor(d, from, to));
+                      return (
+                        <tr key={d.book.id}>
+                          <th>
+                            <strong>{d.book.discipline}</strong>
+                            <small>{d.book.teacher_name}</small>
+                          </th>
+                          <td>
+                            {d.enrollments.filter((e) => !isRetired(e)).length}
+                          </td>
+                          <td>
+                            {d.enrollments.filter((e) => isRetired(e)).length}
+                          </td>
+                          <td>{summary.present}</td>
+                          <td>{summary.absent}</td>
+                          <td>{summary.justified}</td>
+                          <td>{summary.pending}</td>
+                          <td>
+                            {summary.percentage === null
+                              ? "Sin registros"
+                              : `${summary.percentage}%`}
+                          </td>
+                          <td>
+                            <button
+                              className="button small"
+                              aria-pressed={detail === d.book.id}
+                              onClick={() =>
+                                setDetail(detail === d.book.id ? "" : d.book.id)
+                              }
+                            >
+                              {detail === d.book.id
+                                ? "Cerrar"
+                                : "Abrir asistencia"}
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              <p className="hint">
+                Las suspensiones y los pendientes no participan en el
+                porcentaje. Los retiros conservan sus sesiones históricas, sin
+                generar clases posteriores a su fecha de salida.
+              </p>
+            </>
+          )}
+          {detail && (
+            <BookView
+              key={`detail/${detail}`}
+              bookId={detail}
+              initialTab="attendance"
+              embedded
+              access={{ kind: "admin", book_id: null }}
+              onAdmin={() => {}}
+              onBack={() => setDetail("")}
+            />
+          )}
+        </>
+      ) : (
+        <>
+          <div
+            className="course-tabs"
+            role="tablist"
+            aria-label="Cursos del período"
+          >
+            {available.map((b) => (
+              <button
+                role="tab"
+                aria-selected={selectedId === b.id}
+                className={selectedId === b.id ? "selected" : ""}
+                key={b.id}
+                onClick={() => setSelected(b.id)}
+              >
+                <strong>{b.discipline}</strong>
+                <small>{b.teacher_name}</small>
+              </button>
+            ))}
+          </div>
+          {selectedId ? (
+            <BookView
+              key={`${mode}/${selectedId}`}
+              bookId={selectedId}
+              initialTab={mode === "schedules" ? "schedule" : "students"}
+              embedded
+              access={{ kind: "admin", book_id: null }}
+              onAdmin={() => {}}
+              onBack={() => {}}
+            />
+          ) : (
+            <p className="empty-state">
+              No hay cursos registrados en este período.
+            </p>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 function Admin({
   catalog,
   refresh,
@@ -1293,7 +1654,7 @@ function Admin({
   refresh: () => Promise<void>;
   onClose: () => void;
 }) {
-  const [tab, setTab] = useState("suspensions"),
+  const [tab, setTab] = useState("overview"),
     [suspensions, setSuspensions] = useState<Suspension[]>([]),
     [error, setError] = useState(""),
     [notice, setNotice] = useState(""),
@@ -1328,6 +1689,9 @@ function Admin({
       </div>
       <div className="book-tabs">
         {[
+          ["overview", "Vista general"],
+          ["schedules", "Horarios"],
+          ["students", "Estudiantes"],
           ["suspensions", "Suspensiones"],
           ["teachers", "Profesores"],
           ["periods", "Períodos"],
@@ -1354,6 +1718,9 @@ function Admin({
           </p>
         )}
         {error && <Alert>{error}</Alert>}
+        {["overview", "schedules", "students"].includes(tab) && (
+          <AdminWorkspace catalog={catalog} mode={tab} />
+        )}
         {tab === "teachers" && (
           <>
             <h2>Profesores</h2>

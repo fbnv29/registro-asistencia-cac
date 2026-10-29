@@ -1,6 +1,6 @@
 import type { PoolClient } from "@neondatabase/serverless";
 import type { BookData, Lesson } from "../src/domain";
-import { lessonsFor } from "../src/domain";
+import { lessonsFor, isRetired } from "../src/domain";
 import { randomUUID } from "node:crypto";
 export class HttpError extends Error {
   constructor(
@@ -101,7 +101,7 @@ export async function setAttendance(
 ) {
   requireBook(access, bookId);
   await lockBook(c, bookId);
-  const data = await loadBook(c, bookId);
+  const data = visibleBook(await loadBook(c, bookId), access);
   const lesson = lessonsFor(data, input.date, input.date).find(
     (l) => l.enrollment_id === input.enrollment_id && l.slot === input.slot,
   );
@@ -136,4 +136,65 @@ export function findLesson(
   return lessonsFor(data, lesson.date, lesson.date).find(
     (l) => l.slot === lesson.slot && l.enrollment_id === lesson.enrollment_id,
   );
+}
+
+/** Retired students and all records identifying them are visible only to administration. */
+export function visibleBook(data: BookData, access: Access): BookData {
+  if (access.kind === "admin") return data;
+  const enrollments = data.enrollments.filter((e) => !isRetired(e));
+  const ids = new Set(enrollments.map((e) => e.id));
+  return {
+    ...data,
+    enrollments,
+    schedules: data.schedules.filter((s) => ids.has(s.enrollment_id)),
+    attendance: data.attendance.filter((a) => ids.has(a.enrollment_id)),
+  };
+}
+
+export async function loadAdminBooks(c: PoolClient): Promise<BookData[]> {
+  const books = (
+    await c.query(
+      "SELECT b.id,b.teacher_id,b.period_id,b.discipline,b.sessions_per_week,b.duration_minutes,t.name AS teacher_name,p.name AS period_name FROM books b JOIN teachers t ON t.id=b.teacher_id JOIN periods p ON p.id=b.period_id ORDER BY t.name,b.discipline",
+    )
+  ).rows;
+  const periods = (
+    await c.query("SELECT id,name,start_date::text,end_date::text FROM periods")
+  ).rows;
+  const enrollments = (
+    await c.query(
+      "SELECT e.id,e.student_id,e.book_id,s.full_name,e.joined_on::text,e.left_on::text FROM enrollments e JOIN students s ON s.id=e.student_id ORDER BY s.full_name",
+    )
+  ).rows;
+  const schedules = (
+    await c.query(
+      "SELECT id,enrollment_id,effective_from::text,slots FROM schedule_versions",
+    )
+  ).rows;
+  const attendance = (
+    await c.query(
+      "SELECT l.enrollment_id,l.date::text,l.slot,a.status FROM lessons l JOIN attendance a ON a.lesson_id=l.id",
+    )
+  ).rows;
+  const suspensions = (
+    await c.query(
+      "SELECT id,scope,target_id,start_date::text,end_date::text,reason FROM suspensions",
+    )
+  ).rows;
+  return books.map((book) => {
+    const members = enrollments.filter((e) => e.book_id === book.id);
+    const ids = new Set(members.map((e) => e.id));
+    return {
+      book,
+      period: periods.find((p) => p.id === book.period_id),
+      enrollments: members,
+      schedules: schedules.filter((s) => ids.has(s.enrollment_id)),
+      attendance: attendance.filter((a) => ids.has(a.enrollment_id)),
+      suspensions: suspensions.filter(
+        (s) =>
+          s.scope === "center" ||
+          (s.scope === "teacher" && s.target_id === book.teacher_id) ||
+          (s.scope === "book" && s.target_id === book.id),
+      ),
+    };
+  });
 }

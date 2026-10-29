@@ -273,16 +273,65 @@ describeIntegration(
       expect(lessons[0].date).toBe("2026-07-03");
       expect(lessons.find((l) => l.date === "2026-07-17")).toBeUndefined();
       expect(lessons.find((l) => l.date === "2026-07-15")?.time).toBe("17:00");
-      r = await call(`/books/${bookIds[0]}/students`, {
+      const withdrawal = {
         enrollment_id: e,
         full_name: "Ingreso tardío de prueba",
         joined_on: "2026-07-01",
         left_on: "2026-07-31",
-      });
-      expect(r.status).toBe(200);
-      data = await (await call(`/books/${bookIds[0]}`)).json();
+      };
+      expect(
+        (await call(`/books/${bookIds[0]}/students`, withdrawal)).status,
+      ).toBe(403);
+      expect(
+        (await call(`/books/${bookIds[0]}/students`, withdrawal, adminCookie))
+          .status,
+      ).toBe(200);
+      data = await (
+        await call(`/books/${bookIds[0]}`, undefined, adminCookie)
+      ).json();
       lessons = lessonsFor(data).filter((l) => l.enrollment_id === e);
+      expect(lessons.length).toBeGreaterThan(0);
       expect(lessons.every((l) => l.date <= "2026-07-31")).toBe(true);
+      const teacherData: BookData = await (
+        await call(`/books/${bookIds[0]}`)
+      ).json();
+      expect(teacherData.enrollments.some((row) => row.id === e)).toBe(false);
+      expect(teacherData.schedules.some((row) => row.enrollment_id === e)).toBe(
+        false,
+      );
+      expect(
+        teacherData.attendance.some((row) => row.enrollment_id === e),
+      ).toBe(false);
+      expect(
+        (
+          await call(`/books/${bookIds[0]}/students`, {
+            ...withdrawal,
+            left_on: null,
+          })
+        ).status,
+      ).toBe(404);
+      expect(
+        (
+          await call(`/books/${bookIds[0]}/attendance`, {
+            enrollment_id: e,
+            date: "2026-07-03",
+            slot: 0,
+            status: "present",
+          })
+        ).status,
+      ).toBe(409);
+      expect((await call("/admin/overview")).status).toBe(403);
+      const overview = await (
+        await call("/admin/overview", undefined, adminCookie)
+      ).json();
+      const fullBook = overview.books.find(
+        (d: BookData) => d.book.id === bookIds[0],
+      );
+      expect(
+        fullBook.enrollments.some(
+          (row: any) => row.id === e && row.left_on === "2026-07-31",
+        ),
+      ).toBe(true);
     });
     it("exporta Excel con las mismas fechas, estados y porcentajes", async () => {
       const r = await call(

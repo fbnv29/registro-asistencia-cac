@@ -6,6 +6,8 @@ import {
   audit,
   HttpError,
   loadBook,
+  visibleBook,
+  loadAdminBooks,
   lockBook,
   requireAdmin,
   requireBook,
@@ -273,7 +275,7 @@ export async function handleApi(
           action = bookPath[2];
         requireBook(access, bookId);
         if (!action && req.method === "GET")
-          return json(await loadBook(c, bookId));
+          return json(visibleBook(await loadBook(c, bookId), access!));
         if (action === "attendance" && req.method === "POST") {
           const input = z
             .object({
@@ -297,8 +299,10 @@ export async function handleApi(
               slots: slots.optional(),
             })
             .parse(await body(req));
+          if (access!.kind !== "admin" && input.left_on != null)
+            requireAdmin(access);
           await lockBook(c, bookId);
-          const data = await loadBook(c, bookId);
+          const data = visibleBook(await loadBook(c, bookId), access!);
           if (
             input.joined_on < data.period.start_date ||
             input.joined_on > data.period.end_date ||
@@ -324,14 +328,18 @@ export async function handleApi(
               input.full_name,
               e.student_id,
             ]);
-            await c.query("UPDATE enrollments SET left_on=$1 WHERE id=$2", [
-              input.left_on || null,
-              e.id,
-            ]);
+            if (access!.kind === "admin" && input.left_on !== undefined)
+              await c.query("UPDATE enrollments SET left_on=$1 WHERE id=$2", [
+                input.left_on,
+                e.id,
+              ]);
             await audit(c, access!, "enrollment.update", bookId, {
               enrollment_id: e.id,
               full_name: input.full_name,
-              left_on: input.left_on || null,
+              left_on:
+                access!.kind === "admin" && input.left_on !== undefined
+                  ? input.left_on
+                  : e.left_on,
             });
             return json({ id: e.id });
           }
@@ -400,7 +408,7 @@ export async function handleApi(
             .object({ enrollment_id: id, effective_from: date, slots })
             .parse(await body(req));
           await lockBook(c, bookId);
-          const data = await loadBook(c, bookId);
+          const data = visibleBook(await loadBook(c, bookId), access!);
           const e = data.enrollments.find((e) => e.id === input.enrollment_id);
           if (!e) throw new HttpError(404, "Estudiante no encontrado.");
           if (
@@ -461,7 +469,7 @@ export async function handleApi(
             to = date.parse(url.searchParams.get("to"));
           if (from > to)
             throw new HttpError(400, "Revisa las fechas del informe.");
-          const data = await loadBook(c, bookId),
+          const data = visibleBook(await loadBook(c, bookId), access!),
             all = lessonsFor(data, from, to);
           const workbook = new ExcelJS.Workbook();
           workbook.creator = "Centro Artístico CAC";
@@ -547,6 +555,10 @@ export async function handleApi(
             },
           });
         }
+      }
+      if (path === "/admin/overview" && req.method === "GET") {
+        requireAdmin(access);
+        return json({ books: await loadAdminBooks(c) });
       }
       if (path === "/admin" && req.method === "GET") {
         requireAdmin(access);

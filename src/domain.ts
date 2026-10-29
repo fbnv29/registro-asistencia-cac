@@ -199,3 +199,26 @@ export function summarize(lessons: Lesson[]) {
       : null,
   };
 }
+
+export function isRetired(enrollment: Enrollment, on = localToday()): boolean {
+  return !!enrollment.left_on && enrollment.left_on <= on;
+}
+/** Timetabled positions freed by withdrawals and not occupied by another enrollment. */
+export function vacantSlots(data: BookData, on = localToday()): Slot[] {
+  const scheduled = (e: Enrollment) =>
+    data.schedules
+      .filter((v) => v.enrollment_id === e.id && v.effective_from <= on)
+      .sort((a, b) => b.effective_from.localeCompare(a.effective_from))[0]
+      ?.slots || [];
+  const occupied = new Set(
+    data.enrollments
+      .filter((e) => e.joined_on <= on && !isRetired(e, on))
+      .flatMap(scheduled)
+      .map((s) => `${s.day}/${s.time}`),
+  );
+  const free = data.enrollments
+    .filter((e) => isRetired(e, on))
+    .flatMap(scheduled)
+    .filter((s) => !occupied.has(`${s.day}/${s.time}`));
+  return [...new Map(free.map((s) => [`${s.day}/${s.time}`, s])).values()];
+}

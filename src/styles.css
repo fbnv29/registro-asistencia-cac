@@ -2254,3 +2254,271 @@ h1 em {
 .home .book-cover h3 {
   hyphens: auto;
 }
+/* Administrative overview and course workspaces. */
+.admin-page.container {
+  max-width: 1480px;
+  padding-top: 0;
+}
+.admin-page > .section-heading {
+  margin-bottom: 14px;
+}
+.admin-page h1 {
+  font-size: 32px;
+  margin: 6px 0 10px;
+}
+.admin-page > .book-tabs {
+  gap: 20px;
+}
+.admin-card:has(.admin-workspace) {
+  padding: 22px;
+}
+.workspace-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+}
+.workspace-heading h2 {
+  margin-bottom: 8px;
+}
+.workspace-heading p {
+  margin-bottom: 6px;
+}
+.workspace-heading > .field {
+  min-width: 220px;
+  margin: 0;
+}
+.overview-toolbar {
+  display: flex;
+  gap: 16px;
+  justify-content: space-between;
+  align-items: center;
+}
+.overview-toolbar .report-dates {
+  flex: 1;
+}
+.overview-counts {
+  display: flex;
+  gap: 22px;
+  flex-wrap: wrap;
+  padding: 12px 0;
+  color: #67758a;
+  font-size: 15px;
+}
+.overview-counts strong {
+  color: #182039;
+}
+.overview-table th small {
+  display: block;
+  font-weight: 400;
+  color: #697b91;
+  margin-top: 5px;
+}
+.course-tabs {
+  display: flex;
+  gap: 10px;
+  overflow-x: auto;
+  margin: 22px 0 8px;
+  padding-bottom: 8px;
+}
+.course-tabs button {
+  min-width: 180px;
+  background: #f6f8fa;
+  border: 1px solid #d9e2e9;
+  border-radius: 7px;
+  padding: 12px 16px;
+  text-align: left;
+}
+.course-tabs button.selected {
+  background: #eaf2f6;
+  border-color: #00627e;
+  box-shadow: inset 0 -2px #00627e;
+}
+.course-tabs strong,
+.course-tabs small {
+  display: block;
+}
+.course-tabs strong {
+  font-size: 16px;
+  color: #182039;
+  font-weight: 600;
+}
+.course-tabs small {
+  font-size: 13px;
+  color: #667c90;
+  margin-top: 4px;
+}
+.admin-workspace-book {
+  margin-top: 20px;
+  border-top: 1px solid #dce3ea;
+}
+.admin-workspace-book .book-title {
+  padding: 20px 0 18px;
+}
+.admin-workspace-book .book-title h1 {
+  font-size: 25px;
+}
+.admin-workspace-book .book-title-icon {
+  display: none;
+}
+.admin-workspace-book .book-sheet {
+  border: 1px solid #dce3ea;
+  border-radius: 7px;
+  padding: 20px;
+}
+.admin-workspace-book .book-title p {
+  font-size: 14px;
+}
+.student-status-tabs {
+  display: flex;
+  gap: 8px;
+  margin: 15px 0;
+  flex-wrap: wrap;
+}
+.student-status-tabs button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 42px;
+  padding: 9px 14px;
+  border: 1px solid #d6e0e8;
+  border-radius: 6px;
+  background: #fff;
+  font-size: 15px;
+}
+.student-status-tabs button.selected {
+  background: #eaf2f6;
+  color: #00627e;
+  border-color: #00627e;
+}
+.student-status-tabs span {
+  color: #6d8193;
+  font-size: 13px;
+}
+.retired-badge {
+  display: inline-block;
+  margin-left: 8px;
+  background: #f2e9e6;
+  color: #9a5943;
+  padding: 3px 7px;
+  border-radius: 4px;
+  font-size: 11px;
+}
+.available-slot {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 8px;
+  margin-bottom: 10px;
+  border: 1px dashed #8aabb9;
+  border-radius: 5px;
+  background: #eef5f8;
+  color: #00627e;
+}
+.available-slot strong {
+  font-size: 14px;
+}
+.available-slot span {
+  font-size: 13px;
+}
+.available-slot small {
+  font-size: 11px;
+  color: #6c8497;
+}
+@media (max-width: 700px) {
+  .admin-card:has(.admin-workspace) {
+    padding: 16px 10px;
+  }
+  .workspace-heading {
+    flex-direction: column;
+    gap: 12px;
+  }
+  .workspace-heading > .field {
+    width: 100%;
+  }
+  .overview-toolbar {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .overview-toolbar .report-dates {
+    width: 100%;
+  }
+  .overview-counts {
+    gap: 8px 16px;
+    font-size: 14px;
+  }
+  .admin-workspace-book .book-title .add-student {
+    margin-left: 0;
+  }
+  .admin-workspace-book .book-sheet {
+    padding: 16px 10px;
+  }
+}
+/* Keep the administrative dashboard as compact as the library. */
+.admin-page > .back-link {
+  margin: 4px 0;
+  min-height: 32px;
+}
+.admin-page > .section-heading {
+  margin-bottom: 8px;
+  padding-top: 6px;
+}
+.admin-page > .section-heading .eyebrow {
+  display: none;
+}
+.admin-page > .section-heading h1 {
+  font-size: 28px;
+  margin: 3px 0 6px;
+}
+.admin-page > .section-heading p {
+  font-size: 14px;
+}
+.admin-page > .book-tabs > button {
+  padding-top: 12px;
+  padding-bottom: 12px;
+  min-height: 46px;
+}
+.admin-card:has(.admin-workspace) {
+  padding: 18px;
+}
+.workspace-heading h2 {
+  font-size: 24px;
+}
+.workspace-heading .muted {
+  font-size: 14px;
+}
+.overview-toolbar .field {
+  margin-top: 10px;
+  margin-bottom: 10px;
+}
+.overview-counts {
+  padding: 8px 0;
+}
+.admin-workspace > .stats {
+  margin-top: 10px;
+  margin-bottom: 16px;
+}
+.admin-workspace > .stats > div {
+  padding: 12px 14px;
+}
+.admin-workspace > .stats span {
+  margin-bottom: 6px;
+}
+.admin-workspace > .stats strong {
+  font-size: 24px;
+}
+@media (max-width: 700px) {
+  .admin-card:has(.admin-workspace) {
+    padding: 14px 10px;
+  }
+  .admin-workspace > .stats > div {
+    padding: 10px 8px;
+  }
+  .admin-workspace > .stats strong {
+    font-size: 20px;
+  }
+  .workspace-heading h2 {
+    font-size: 22px;
+  }
+}

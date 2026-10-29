@@ -46,7 +46,7 @@ No hay contraseñas predeterminadas en el repositorio. Las de esta sesión está
 3. Dentro del libro registra estudiantes: nombre completo, ingreso y día/hora de cada sesión. La duración parte en 45 minutos y administración puede ajustarla por libro.
 4. La hoja **Asistencia** muestra estudiantes en filas y semanas de lunes a domingo en columnas. Cada sesión muestra su fecha real. Los cambios se guardan al elegir estado; los fallos muestran **Reintentar**.
 5. **Horario** muestra la distribución recurrente vigente en una fecha. Sus cambios conservan el pasado. Si un cambio dejaría marcas existentes fuera de horario, el servidor pide otra fecha o retirar esas marcas explícitamente antes de continuar.
-6. **Estudiantes** permite corregir el nombre y fijar o quitar la fecha de retiro. El ingreso original se conserva. Un reemplazante se registra como estudiante independiente.
+6. **Estudiantes** permite corregir el nombre; solo administración puede fijar o quitar la fecha de retiro. El ingreso original se conserva. Un reemplazante se registra como estudiante independiente.
 7. Administración suspende fechas o intervalos, inclusive ambos extremos, para el CAC, un profesor con todos sus libros o un libro. Puede quitar una suspensión y recuperar las marcas subyacentes.
 8. **Resumen** filtra por fechas y exporta un `.xlsx` con resumen por estudiante, total del libro y detalle de sesiones. El total del libro se pondera por sesiones, no por promedio de porcentajes individuales.
 
@@ -106,3 +106,11 @@ La configuración está en `netlify.toml`: construcción `npm run build`, salida
 5. Verificar entrada, guardado, recarga, suspensión, exportación y salida en el sitio HTTPS antes de utilizar datos reales.
 
 GitHub Pages puede publicar una maqueta estática, pero no ejecuta esta API ni protege el acceso compartido a Neon. Esta versión conserva el servidor para que la asistencia sea persistente y compartida.
+
+## Panel administrativo ampliado
+
+Administración abre por defecto una vista global de asistencia por período y rango de fechas, con totales ponderados por sesión y detalle por curso. Las secciones Horarios y Estudiantes tienen pestañas por libro; desde allí se pueden agregar estudiantes, editar sus nombres y horarios y registrar o quitar retiros.
+
+Solo administración puede establecer una fecha de retiro o ver las fichas y registros de estudiantes retirados, también al consultar o exportar períodos anteriores. La API filtra fichas, horarios y asistencias antes de entregarlos a una sesión de libro. Un retiro se aplica desde su fecha; la última fecha sigue siendo computable en el historial administrativo. No se borran datos ni se transfieren marcas al reemplazante. Los horarios de retirados aparecen disponibles cuando ningún estudiante activo ocupa el mismo día y hora; un reemplazo deja de mostrar ese horario como disponible. No se ha definido un aforo máximo por curso.
+
+`GET /api/admin/overview` entrega los datos de todos los libros exclusivamente con una sesión administrativa. Las pruebas comprueban la restricción de retiro, la no exposición de datos a profesores y la liberación y ocupación de horarios.
