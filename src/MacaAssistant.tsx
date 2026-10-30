@@ -1,4 +1,12 @@
-import { useRef, useState } from "react";
+import {
+  MessageCircle,
+  Minus,
+  Send,
+  SlidersHorizontal,
+  Music2,
+  Trash2,
+} from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "./api";
 import type { Book, Teacher } from "./domain";
 type Result = {
@@ -37,6 +45,26 @@ export function MacaAssistant({
     [book, setBook] = useState(""),
     [teacher, setTeacher] = useState("");
   const sending = useRef(false);
+  const [open, setOpen] = useState(false),
+    [showFilters, setShowFilters] = useState(false);
+  const inputRef = useRef<HTMLTextAreaElement>(null),
+    logRef = useRef<HTMLDivElement>(null),
+    launcherRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (open) inputRef.current?.focus();
+  }, [open]);
+  useEffect(() => {
+    if (open && logRef.current)
+      logRef.current.scrollTo({
+        top: logRef.current.scrollHeight,
+        behavior: "smooth",
+      });
+  }, [messages, busy, open]);
+  function minimize() {
+    setOpen(false);
+    requestAnimationFrame(() => launcherRef.current?.focus());
+  }
+
   async function send(text = question) {
     if (sending.current || !text.trim()) return;
     sending.current = true;
@@ -71,165 +99,283 @@ export function MacaAssistant({
     }
   }
   return (
-    <div className="maca">
-      <h2>🤖 Maca Asistente</h2>
-      <p>
-        ¡Hola! Soy Maca, tu asistente del CAC: reviso asistencia, pendientes,
-        suspensiones y cambios de horario con los números afinados y una cuota
-        de humor musical. Solo consulto datos; no modifico registros.
-      </p>
-      <p className="maca-joke">
-        🎵 ¿Qué hace una pianista cuando organiza sus pendientes? ¡Toma nota!
-      </p>
-      <p className="muted">
-        Historial temporal en esta pestaña. Los nombres escritos en el chat no
-        se usan como filtros: selecciona el libro o profesor aquí.
-      </p>
-      <div className="maca-filters">
-        <label>
-          Desde
-          <input
-            type="date"
-            value={from}
-            onChange={(e) => setFrom(e.target.value)}
-          />
-        </label>
-        <label>
-          Hasta
-          <input
-            type="date"
-            value={to}
-            onChange={(e) => setTo(e.target.value)}
-          />
-        </label>
-        <label>
-          Libro
-          <select value={book} onChange={(e) => setBook(e.target.value)}>
-            <option value="">Todos</option>
-            {books.map((b) => (
-              <option key={b.id} value={b.id}>
-                {b.teacher_name} · {b.discipline}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          Profesor
-          <select value={teacher} onChange={(e) => setTeacher(e.target.value)}>
-            <option value="">Todos</option>
-            {teachers.map((t) => (
-              <option key={t.id} value={t.id}>
-                {t.name}
-              </option>
-            ))}
-          </select>
-        </label>
-      </div>
-      <div className="maca-suggestions">
-        {[
-          "¿Cuántas clases se registraron esta semana?",
-          "¿Qué libros tienen registros pendientes hoy?",
-          "¿Cuántos cambios de horario esperan aprobación?",
-          "¿Cómo evolucionó la asistencia durante el semestre?",
-          "Comparar asistencia del mes anterior",
-        ].map((q) => (
-          <button key={q} disabled={busy} onClick={() => send(q)}>
-            {q}
-          </button>
-        ))}
-      </div>
-      <div role="log" aria-label="Conversación con Maca" aria-live="polite">
-        {messages.map((m, i) => (
-          <article key={i} className="maca-message">
-            <p>
-              <strong>Tú:</strong> {m.question}
-            </p>
-            <p>
-              <strong>Maca:</strong> {m.result.text}
-            </p>
-            {m.result.musical_aside && (
-              <p className="maca-joke">🎵 {m.result.musical_aside}</p>
-            )}
-            <p>
-              {m.result.from} al {m.result.to} · America/Santiago ·{" "}
-              {m.result.source}
-            </p>
-            <p>Filtros: {m.filters}</p>
-            {m.result.summary && (
-              <p>
-                <strong>{m.result.summary.pending}</strong> pendientes ·{" "}
-                <strong>{m.result.summary.suspended}</strong> suspendidas
-              </p>
-            )}
-            {m.result.rows.length > 0 && (
-              <div className="table-scroll">
-                <table className="plain-table">
-                  <thead>
-                    <tr>
-                      {Object.keys(m.result.rows[0]).map((k) => (
-                        <th key={k}>{k}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {m.result.rows.map((row, j) => (
-                      <tr key={j}>
-                        {Object.entries(row).map(([k, v]) => (
-                          <td key={k}>{v ?? "Sin registros"}</td>
-                        ))}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-            {m.result.comparison && (
-              <p>
-                Período anterior ({m.result.comparison.from} al{" "}
-                {m.result.comparison.to}): {m.result.comparison.count}{" "}
-                registradas, {m.result.comparison.percentage ?? "sin registros"}{" "}
-                %.
-              </p>
-            )}
-            <small>
-              {m.result.warning} Consultado:{" "}
-              {new Date(m.result.generated_at).toLocaleString("es-CL", {
-                timeZone: "America/Santiago",
-              })}
-              . Uso diario: {m.result.usage.used}/{m.result.usage.limit}.
-            </small>
-          </article>
-        ))}
-      </div>
-      {error && (
-        <p role="alert" className="error">
-          {error}
-        </p>
-      )}
-      {busy && <p role="status">Estoy afinando los números…</p>}
-      <form
-        onSubmit={(e) => {
-          e.preventDefault();
-          void send();
+    <div className="maca-dock">
+      <button
+        ref={launcherRef}
+        className="maca-launcher"
+        hidden={open}
+        aria-label="Abrir chat con Maca"
+        aria-expanded={open}
+        aria-controls="maca-chat"
+        onClick={() => setOpen(true)}
+      >
+        <span className="maca-avatar">
+          <Music2 size={18} />
+        </span>
+        <span>
+          Maca<span className="maca-launcher-caption">Asistente CAC</span>
+        </span>
+        {busy ? (
+          <span className="maca-dot maca-dot-busy" aria-label="Consultando" />
+        ) : (
+          <MessageCircle size={18} />
+        )}
+      </button>
+      <section
+        id="maca-chat"
+        className="maca-window"
+        hidden={!open}
+        aria-label="Chat con Maca"
+        onKeyDown={(e) => {
+          if (e.key === "Escape") {
+            e.stopPropagation();
+            minimize();
+          }
         }}
       >
-        <label htmlFor="maca-question">Pregunta institucional</label>
-        <textarea
-          id="maca-question"
-          maxLength={600}
-          rows={3}
-          value={question}
-          onChange={(e) => setQuestion(e.target.value)}
-          required
-          disabled={busy}
-        />
-        <button type="submit" disabled={busy || !question.trim()}>
-          Consultar
-        </button>
-        <button type="button" disabled={busy} onClick={() => setMessages([])}>
-          Limpiar conversación
-        </button>
-      </form>
+        <header className="maca-header">
+          <span className="maca-avatar">
+            <Music2 size={18} />
+          </span>
+          <div>
+            <h2>Maca</h2>
+            <span>Tu asistente del CAC</span>
+          </div>
+          <button
+            type="button"
+            aria-label="Minimizar chat de Maca"
+            onClick={minimize}
+          >
+            <Minus size={19} />
+          </button>
+        </header>
+        <div className="maca-toolbar">
+          <button
+            type="button"
+            aria-expanded={showFilters}
+            aria-controls="maca-filters"
+            onClick={() => setShowFilters((v) => !v)}
+          >
+            <SlidersHorizontal size={14} /> Filtros
+            {(from || to || book || teacher) && <span className="maca-dot" />}
+          </button>
+          <button
+            type="button"
+            aria-label="Limpiar conversación"
+            title="Limpiar conversación"
+            disabled={busy || !messages.length}
+            onClick={() => {
+              setMessages([]);
+              setError("");
+            }}
+          >
+            <Trash2 size={14} />
+          </button>
+        </div>
+        {showFilters && (
+          <div className="maca-filters" id="maca-filters">
+            <label>
+              Desde
+              <input
+                type="date"
+                value={from}
+                onChange={(e) => setFrom(e.target.value)}
+              />
+            </label>
+            <label>
+              Hasta
+              <input
+                type="date"
+                value={to}
+                onChange={(e) => setTo(e.target.value)}
+              />
+            </label>
+            <label>
+              Libro
+              <select value={book} onChange={(e) => setBook(e.target.value)}>
+                <option value="">Todos</option>
+                {books.map((b) => (
+                  <option key={b.id} value={b.id}>
+                    {b.teacher_name} · {b.discipline}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Profesor
+              <select
+                value={teacher}
+                onChange={(e) => setTeacher(e.target.value)}
+              >
+                <option value="">Todos</option>
+                {teachers.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <small>Para filtrar por nombre, usa estos selectores.</small>
+          </div>
+        )}
+        <div
+          ref={logRef}
+          className="maca-conversation"
+          role="log"
+          aria-label="Conversación con Maca"
+          aria-live="polite"
+          aria-relevant="additions text"
+        >
+          <div className="maca-bubble maca-welcome">
+            <p>¡Hola! Soy Maca 🎵 ¿Afinamos los números del CAC?</p>
+            <p className="maca-joke">
+              Yo con los pendientes hago como las pianistas: ¡tomo nota!
+            </p>
+          </div>
+          {messages.length === 0 && !busy && (
+            <div className="maca-suggestions">
+              {[
+                ["Asistencia de hoy", "¿Cuántas clases se registraron hoy?"],
+                [
+                  "Libros pendientes",
+                  "¿Qué libros tienen registros pendientes hoy?",
+                ],
+                [
+                  "Cambios por aprobar",
+                  "¿Cuántos cambios de horario esperan aprobación?",
+                ],
+              ].map(([label, q]) => (
+                <button type="button" key={label} onClick={() => send(q)}>
+                  {label}
+                </button>
+              ))}
+            </div>
+          )}
+          {messages.map((m, i) => (
+            <article key={i} className="maca-exchange">
+              <div className="maca-bubble maca-user">
+                <span className="sr-only">Tú: </span>
+                {m.question}
+              </div>
+              <div className="maca-bubble maca-reply">
+                <p>
+                  <span className="sr-only">Maca: </span>
+                  {m.result.text}
+                </p>
+                {m.result.summary && (
+                  <p className="maca-summary">
+                    <strong>{m.result.summary.pending}</strong> pendientes ·{" "}
+                    <strong>{m.result.summary.suspended}</strong> suspendidas
+                  </p>
+                )}
+                {m.result.rows.length > 0 && (
+                  <div className="table-scroll">
+                    <table className="plain-table">
+                      <thead>
+                        <tr>
+                          {Object.keys(m.result.rows[0]).map((k) => (
+                            <th key={k}>{k}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {m.result.rows.map((row, j) => (
+                          <tr key={j}>
+                            {Object.entries(row).map(([k, v]) => (
+                              <td key={k}>{v ?? "Sin registros"}</td>
+                            ))}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+                {m.result.comparison && (
+                  <p>
+                    Período anterior ({m.result.comparison.from} al{" "}
+                    {m.result.comparison.to}): {m.result.comparison.count}{" "}
+                    registradas,{" "}
+                    {m.result.comparison.percentage ?? "sin registros"} %.
+                  </p>
+                )}
+                {m.result.musical_aside && (
+                  <p className="maca-joke">🎵 {m.result.musical_aside}</p>
+                )}
+                <details className="maca-result-details">
+                  <summary>Período y detalle</summary>
+                  <p>
+                    {m.result.from} al {m.result.to} · America/Santiago
+                  </p>
+                  <p>{m.filters}</p>
+                  <p>{m.result.source}</p>
+                  <p>{m.result.warning}</p>
+                  <p>
+                    Consultado:{" "}
+                    {new Date(m.result.generated_at).toLocaleString("es-CL", {
+                      timeZone: "America/Santiago",
+                    })}
+                  </p>
+                  <p>
+                    Uso diario: {m.result.usage.used}/{m.result.usage.limit}
+                  </p>
+                </details>
+              </div>
+            </article>
+          ))}
+          {busy && (
+            <div className="maca-bubble maca-processing" role="status">
+              Estoy afinando los números<span aria-hidden="true">…</span>
+            </div>
+          )}
+          {error && (
+            <p role="alert" className="maca-chat-error">
+              {error}
+            </p>
+          )}
+        </div>
+        <form
+          className="maca-composer"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void send();
+          }}
+        >
+          <label htmlFor="maca-question" className="sr-only">
+            Pregunta institucional
+          </label>
+          <textarea
+            ref={inputRef}
+            id="maca-question"
+            placeholder="Escríbele a Maca…"
+            rows={1}
+            maxLength={600}
+            value={question}
+            onChange={(e) => setQuestion(e.target.value)}
+            required
+            disabled={busy}
+            onKeyDown={(e) => {
+              if (
+                e.key === "Enter" &&
+                !e.shiftKey &&
+                !e.nativeEvent.isComposing
+              ) {
+                e.preventDefault();
+                void send();
+              }
+            }}
+          />
+          <button
+            type="submit"
+            aria-label="Enviar pregunta a Maca"
+            disabled={busy || !question.trim()}
+          >
+            <Send size={18} />
+          </button>
+        </form>
+        <div className="maca-footnote">
+          Solo consulta · Conversación temporal
+        </div>
+      </section>
     </div>
   );
 }

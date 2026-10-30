@@ -2084,7 +2084,6 @@ function Admin({
       <div className="book-tabs">
         {[
           ["overview", "Vista general"],
-          ["maca", "🤖 Maca Asistente"],
           ["requests", `Pendientes por aprobar (${pendingCount})`],
           ["schedules", "Horarios"],
           ["students", "Estudiantes"],
@@ -2116,9 +2115,6 @@ function Admin({
           </p>
         )}
         {error && <Alert>{error}</Alert>}
-        {tab === "maca" && (
-          <MacaAssistant books={catalog.books} teachers={catalog.teachers} />
-        )}
         {tab === "manage" && <EntityManager catalog={catalog} save={save} />}
         {tab === "requests" && (
           <RequestList admin onRefresh={load} onReviewed={refresh} />
@@ -2502,6 +2498,7 @@ function Admin({
           </>
         )}
       </section>
+      <MacaAssistant books={catalog.books} teachers={catalog.teachers} />
     </main>
   );
 }

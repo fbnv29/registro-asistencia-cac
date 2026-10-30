@@ -1,6 +1,8 @@
 import { test, expect } from "@playwright/test";
 for (const width of [390, 1280])
-  test(`Maca responsive ${width}px y doble envío`, async ({ page }) => {
+  test(`Maca flotante ${width}px, doble envío e historial`, async ({
+    page,
+  }) => {
     await page.setViewportSize({ width, height: 844 });
     let calls = 0;
     await page.route("**/api/**", async (route) => {
@@ -36,19 +38,45 @@ for (const width of [390, 1280])
     await page
       .getByRole("button", { name: "Administración", exact: true })
       .click();
-    await page
-      .getByRole("button", { name: "🤖 Maca Asistente", exact: true })
-      .click();
+    const launcher = page.getByRole("button", { name: "Abrir chat con Maca" });
+    await expect(launcher).toBeVisible();
     await expect(
-      page.getByRole("heading", { name: "🤖 Maca Asistente" }),
+      page.getByRole("region", { name: "Chat con Maca" }),
+    ).toBeHidden();
+    const launcherBox = await launcher.boundingBox();
+    expect(launcherBox!.x).toBeGreaterThan(width / 2);
+    await page.screenshot({
+      path: `artifacts/maca-collapsed-${width}.png`,
+      fullPage: true,
+    });
+    await launcher.click();
+    await expect(
+      page.getByRole("heading", { name: "Maca", exact: true }),
     ).toBeVisible();
     await page.getByLabel("Pregunta institucional").fill("Asistencia de hoy");
-    await page.getByLabel("Pregunta institucional").evaluate((el: HTMLTextAreaElement) => {
-      el.form!.requestSubmit();
-      el.form!.requestSubmit();
-    });
+    await page
+      .getByLabel("Pregunta institucional")
+      .evaluate((el: HTMLTextAreaElement) => {
+        el.form!.requestSubmit();
+        el.form!.requestSubmit();
+      });
     await expect(page.getByRole("log")).toContainText("3 sesiones");
     expect(calls).toBe(1);
+    await page.getByRole("button", { name: "Minimizar chat de Maca" }).click();
+    await expect(launcher).toBeFocused();
+    await page.getByRole("button", { name: "Profesores", exact: true }).click();
+    await launcher.click();
+    await expect(page.getByRole("log")).toContainText("3 sesiones");
+    await page.getByRole("button", { name: "Filtros", exact: true }).click();
+    await expect(page.getByLabel("Desde", { exact: true })).toBeVisible();
+    const box = await page
+      .getByRole("region", { name: "Chat con Maca" })
+      .boundingBox();
+    expect(box!.x).toBeGreaterThanOrEqual(0);
+    expect(box!.x + box!.width).toBeLessThanOrEqual(width);
+    expect(box!.y + box!.height).toBeLessThanOrEqual(844);
+    await page.getByRole("button", { name: "Filtros", exact: true }).click();
+
     expect(
       await page.evaluate(
         () => document.documentElement.scrollWidth <= window.innerWidth,

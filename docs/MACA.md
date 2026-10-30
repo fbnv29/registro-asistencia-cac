@@ -4,9 +4,9 @@ Implementación sobre la arquitectura existente: React 19 + Vite + TypeScript, f
 
 ## Uso
 
-Administración → 🤖 Maca Asistente. Preguntar por asistencia, profesores con registros, pendientes, suspensiones, solicitudes de horario, superposiciones o evolución mensual. Seleccionar libro/profesor para filtrar; los nombres escritos en el chat no actúan como filtros. Fechas explícitas ISO, meses en español, hoy, ayer, semana, mes y semestre se resuelven en el servidor. Los selectores de fecha prevalecen. El semestre corresponde a enero–junio o julio–diciembre; el período lectivo de cada libro limita las sesiones.
+Administración → botón flotante «Maca» en la esquina inferior derecha. El chat abre como una ventana compacta, se minimiza desde la cabecera o con Escape y conserva la conversación al cambiar de sección administrativa. Los filtros se despliegan desde «Filtros»; Enter envía y Mayús+Enter agrega una línea. Preguntar por asistencia, profesores con registros, pendientes, suspensiones, solicitudes de horario, superposiciones o evolución mensual. Seleccionar libro/profesor para filtrar; los nombres escritos en el chat no actúan como filtros. Fechas explícitas ISO, meses en español, hoy, ayer, semana, mes y semestre se resuelven en el servidor. Los selectores de fecha prevalecen. El semestre corresponde a enero–junio o julio–diciembre; el período lectivo de cada libro limita las sesiones.
 
-Las conversaciones existen únicamente en memoria del componente (hasta 20 intercambios); desaparecen al salir de la pestaña o recargar. No se envía historial al proveedor. Las preguntas son independientes: repetir período y filtros cuando corresponda.
+Las conversaciones existen únicamente en memoria del componente (hasta 20 intercambios); desaparecen al salir del panel administrativo o recargar. No se envía historial al proveedor. Las preguntas son independientes: repetir período y filtros cuando corresponda.
 
 Una sesión es una clase individual de un estudiante. Una marca de ausencia acredita un registro, no que una clase se haya realizado físicamente. El conteo de profesores identifica libros con marcas, no al autor material de las marcas. La cola de cambios pendientes refleja el estado actual, con filtros de profesor/libro, independientemente del rango histórico mostrado.
 
