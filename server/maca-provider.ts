@@ -3,6 +3,7 @@ import { z } from "zod";
 export const intentSchema = z
   .object({
     metric: z.enum([
+      "absences",
       "attendance",
       "teachers",
       "pending",
@@ -27,7 +28,7 @@ export class ProviderError extends Error {
   }
 }
 const instruction =
-  "Clasifica vocabulario institucional. Devuelve solo JSON: metric (attendance,teachers,pending,suspended,requests,conflicts,trend), period (today,week,month,semester), compare boolean. Definiciones: requests=solicitudes o cambios de horario esperando aprobación; pending=libros o registros de asistencia sin completar; conflicts=horarios superpuestos; trend=evolución mensual; teachers=cantidad de profesores con registros; suspended=sesiones suspendidas; attendance=clases registradas o porcentaje de asistencia. Si aparecen aprobación, solicitudes o cambios, usa requests, nunca pending. compare=true solo si se pide comparar períodos. No herramientas ni SQL.";
+  "Clasifica vocabulario institucional. Devuelve solo JSON: metric (absences,attendance,teachers,pending,suspended,requests,conflicts,trend), period (today,week,month,semester), compare boolean. Definiciones: absences=estudiantes con más ausencias o faltas registradas; requests=solicitudes o cambios de horario esperando aprobación; pending=libros o registros de asistencia sin completar; conflicts=horarios superpuestos; trend=evolución mensual; teachers=cantidad de profesores con registros; suspended=sesiones suspendidas; attendance=clases registradas o porcentaje de asistencia. Si aparecen aprobación, solicitudes o cambios, usa requests, nunca pending. compare=true solo si se pide comparar períodos. No herramientas ni SQL.";
 const schema = {
   type: "object",
   additionalProperties: false,
@@ -35,6 +36,7 @@ const schema = {
     metric: {
       type: "string",
       enum: [
+        "absences",
         "attendance",
         "teachers",
         "pending",

@@ -29,7 +29,7 @@ export const macaInput = z
   .strict();
 // A strict vocabulary boundary: arbitrary user text, identifiers and numbers NEVER reach an external provider.
 const vocabulary = new Set(
-  "asistencia asistencias clases clase profesores profesor registraron registrados registros pendientes pendiente libros libro porcentaje mes mensual semana semanal hoy ayer semestre semestral suspendidas suspendidos suspension suspensiones sesiones sesion cambios horario horarios esperando aprobacion solicitudes superpuestos superpuestas superposiciones conflictos evolucion evoluciono tendencia comparar comparacion anterior attendance teachers pending suspended requests conflicts trend today week month semester".split(
+  "estudiante estudiantes alumno alumnos falta faltas falto faltaron ausente ausentes ausencia ausencias inasistencia inasistencias ausentismo mas mayor quien ranking asistencia asistencias clases clase profesores profesor registraron registrados registros pendientes pendiente libros libro porcentaje mes mensual semana semanal hoy ayer semestre semestral suspendidas suspendidos suspension suspensiones sesiones sesion cambios horario horarios esperando aprobacion solicitudes superpuestos superpuestas superposiciones conflictos evolucion evoluciono tendencia comparar comparacion anterior attendance teachers pending suspended requests conflicts trend today week month semester".split(
     " ",
   ),
 );
@@ -45,21 +45,29 @@ export function privateQuestion(question: string) {
       .join(" ") || ""
   );
 }
+function asksStudentAbsences(text: string) {
+  return (
+    /falt|ausen|inasistencia/.test(text) &&
+    /estudiant|alumn|quien|mas|mayor|ranking/.test(text)
+  );
+}
 export function defaultIntent(text: string): MacaIntent {
   return {
-    metric: /aprobacion|solicitudes|cambios/.test(text)
-      ? "requests"
-      : /superpuest|conflict|superpos/.test(text)
-        ? "conflicts"
-        : /evolu|tendencia/.test(text)
-          ? "trend"
-          : /pendiente/.test(text)
-            ? "pending"
-            : /suspend|suspension/.test(text)
-              ? "suspended"
-              : /profesor/.test(text)
-                ? "teachers"
-                : "attendance",
+    metric: asksStudentAbsences(text)
+      ? "absences"
+      : /aprobacion|solicitudes|cambios/.test(text)
+        ? "requests"
+        : /superpuest|conflict|superpos/.test(text)
+          ? "conflicts"
+          : /evolu|tendencia/.test(text)
+            ? "trend"
+            : /pendiente/.test(text)
+              ? "pending"
+              : /suspend|suspension/.test(text)
+                ? "suspended"
+                : /profesor/.test(text)
+                  ? "teachers"
+                  : "attendance",
     period: /hoy/.test(text)
       ? "today"
       : /semana/.test(text)
@@ -155,8 +163,59 @@ export function analyze(
       duration: b.book.duration_minutes,
     })),
   );
+  let absenceLeader: { name: string; absent: number; ties: number } | null =
+    null;
   const summary = summarize(all);
   const rows: Record<string, string | number | null>[] = [];
+  if (metric === "absences") {
+    const enrollments = new Map(
+      books.flatMap((b) => b.enrollments.map((e) => [e.id, e] as const)),
+    );
+    const students = new Map<
+      string,
+      {
+        name: string;
+        present: number;
+        absent: number;
+        justified: number;
+        pending: number;
+        suspended: number;
+      }
+    >();
+    for (const lesson of all) {
+      const e = enrollments.get(lesson.enrollment_id);
+      if (!e) continue;
+      const student = students.get(e.student_id) || {
+        name: e.full_name,
+        present: 0,
+        absent: 0,
+        justified: 0,
+        pending: 0,
+        suspended: 0,
+      };
+      student[lesson.status]++;
+      students.set(e.student_id, student);
+    }
+    const ranked = [...students.values()]
+      .filter((s) => s.absent > 0)
+      .sort(
+        (a, b) => b.absent - a.absent || a.name.localeCompare(b.name, "es"),
+      );
+    if (ranked.length)
+      absenceLeader = {
+        name: ranked[0].name,
+        absent: ranked[0].absent,
+        ties: ranked.filter((s) => s.absent === ranked[0].absent).length,
+      };
+    for (const student of ranked)
+      rows.push({
+        Estudiante: student.name,
+        Ausencias: student.absent,
+        Justificadas: student.justified,
+        Pendientes: student.pending,
+        Suspendidas: student.suspended,
+      });
+  }
   if (metric === "pending")
     for (const b of books) {
       const pending = all.filter(
@@ -207,6 +266,7 @@ export function analyze(
   }
   return {
     summary,
+    absenceLeader,
     teachers: new Set(
       all
         .filter((l) => ["present", "absent", "justified"].includes(l.status))
@@ -275,8 +335,12 @@ export async function askMaca(raw: unknown, sessionHash: string) {
     const provider = process.env.MACA_PROVIDER || "gemini";
     if (!["gemini", "groq", "internal"].includes(provider))
       throw new HttpError(503, "Proveedor de Maca no configurado.");
-    const key =
-      provider === "groq"
+    // Rankings with student identities are resolved entirely inside the server.
+    const localRanking = intent.metric === "absences";
+    if (localRanking) source = "Análisis interno · ausencias por estudiante";
+    const key = localRanking
+      ? undefined
+      : provider === "groq"
         ? process.env.GROQ_API_KEY
         : provider === "gemini"
           ? process.env.GEMINI_API_KEY
@@ -322,7 +386,8 @@ export async function askMaca(raw: unknown, sessionHash: string) {
           source = `${provider === "groq" ? "Groq" : "Gemini"} · clasificación sin datos personales`;
         } else fallback = "invalid_response";
       }
-    } else if (provider !== "internal") fallback = "missing_key";
+    } else if (provider !== "internal" && !localRanking)
+      fallback = "missing_key";
     if (fallback) {
       const reasons: Record<string, string> = {
         quota: "cuota del proveedor agotada",
@@ -342,7 +407,7 @@ export async function askMaca(raw: unknown, sessionHash: string) {
     }
     if (
       source.startsWith("Interpretación interna") &&
-      !/asistencia|clase|sesion|registro|profesor|pendiente|suspend|suspension|solicitud|aprobacion|cambio|superpuest|conflict|superpos|evolu|tendencia/.test(
+      !/estudiant|alumn|falt|ausen|inasistencia|asistencia|clase|sesion|registro|profesor|pendiente|suspend|suspension|solicitud|aprobacion|cambio|superpuest|conflict|superpos|evolu|tendencia/.test(
         safe,
       )
     )
@@ -421,21 +486,30 @@ export async function askMaca(raw: unknown, sessionHash: string) {
       const s = value.summary;
       const figures = `${s.count} sesiones individuales con asistencia registrada: ${s.present} presentes, ${s.absent} ausentes y ${s.justified} justificadas. Asistencia: ${s.percentage === null ? "sin registros" : s.percentage + " %"}.`;
       const text =
-        intent.metric === "teachers"
-          ? `En la partitura del período aparecen ${value.teachers} profesores con registros de asistencia. Esto cuenta profesores con marcas, no quién las ingresó.`
-          : intent.metric === "suspended"
-            ? `En la partitura del período figuran ${s.suspended} sesiones individuales suspendidas. Las dejo fuera del porcentaje de asistencia: una pausa institucional no es una ausencia.`
-            : intent.metric === "conflicts"
-              ? value.conflicts
-                ? `Aquí se cruzaron los compases: detecté ${value.conflicts} pares de sesiones con horarios superpuestos del mismo profesor. Te dejo el detalle para revisarlos.`
-                : "Revisé los compases: no encontré pares de sesiones con horarios superpuestos del mismo profesor en este período."
-              : intent.metric === "pending"
-                ? `Revisé la partitura del período: hay ${s.pending} sesiones individuales pendientes de registro. Todavía les falta su nota en el libro; pendiente no significa ausencia.`
-                : intent.metric === "trend"
-                  ? `Así va el ritmo de la asistencia: ${figures} En la tabla puedes seguirlo mes a mes.`
-                  : `Te paso la partitura del período: ${figures}`;
+        intent.metric === "absences"
+          ? value.absenceLeader
+            ? value.absenceLeader.ties > 1
+              ? `Hay un empate: ${value.absenceLeader.ties} estudiantes tienen ${value.absenceLeader.absent} ausencias cada uno, la mayor cantidad del período consultado. Te dejo el detalle. Solo cuento ausencias registradas; pendientes, justificadas y suspensiones van por separado.`
+              : `${value.absenceLeader.name} tiene la mayor cantidad de ausencias registradas en el período consultado: ${value.absenceLeader.absent}. Pendientes, justificadas y suspensiones van por separado. Puedes revisar el detalle en la tabla.`
+            : s.count === 0
+              ? "No hay asistencias registradas en el período consultado para identificar quién tiene más ausencias. Los registros pendientes no son faltas."
+              : "No hay ausencias registradas en el período consultado. Los registros pendientes no se cuentan como faltas."
+          : intent.metric === "teachers"
+            ? `En la partitura del período aparecen ${value.teachers} profesores con registros de asistencia. Esto cuenta profesores con marcas, no quién las ingresó.`
+            : intent.metric === "suspended"
+              ? `En la partitura del período figuran ${s.suspended} sesiones individuales suspendidas. Las dejo fuera del porcentaje de asistencia: una pausa institucional no es una ausencia.`
+              : intent.metric === "conflicts"
+                ? value.conflicts
+                  ? `Aquí se cruzaron los compases: detecté ${value.conflicts} pares de sesiones con horarios superpuestos del mismo profesor. Te dejo el detalle para revisarlos.`
+                  : "Revisé los compases: no encontré pares de sesiones con horarios superpuestos del mismo profesor en este período."
+                : intent.metric === "pending"
+                  ? `Revisé la partitura del período: hay ${s.pending} sesiones individuales pendientes de registro. Todavía les falta su nota en el libro; pendiente no significa ausencia.`
+                  : intent.metric === "trend"
+                    ? `Así va el ritmo de la asistencia: ${figures} En la tabla puedes seguirlo mes a mes.`
+                    : `Te paso la partitura del período: ${figures}`;
       return {
-        text,
+        text:
+          intent.metric === "absences" ? `Del ${from} al ${to}: ${text}` : text,
         rows: value.rows,
         summary: s,
         comparison: intent.compare

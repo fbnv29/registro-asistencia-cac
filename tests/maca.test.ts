@@ -19,6 +19,8 @@ vi.mock("../server/db", () => ({
           return { rows: [{ daily: state.count, minute: 0 }] };
         if (sql.includes("SELECT 1 FROM maca_requests"))
           return { rows: [], rowCount: state.duplicate ? 1 : 0 };
+        if (sql.includes("AS enrollments"))
+          return { rows: [{ enrollments: 0, lessons: 0, books: 0 }] };
         if (sql.includes("FROM change_requests"))
           return { rows: [{ pending: 3 }] };
         return { rows: [], rowCount: 0 };
@@ -422,4 +424,67 @@ it("simula 50 profesores y 5500 sesiones mensuales", () => {
     `Maca: 5500 sesiones / 50 profesores, ${ms.toFixed(1)} ms; heap ${(process.memoryUsage().heapUsed / 1024 / 1024).toFixed(1)} MiB (proceso de pruebas, sin red/SQL).`,
   );
   expect(ms).toBeLessThan(5000);
+});
+
+it("entiende la pregunta de estudiantes y responde sin enviar nombres al proveedor", async () => {
+  const question = "que estudiante falta mas?";
+  expect(defaultIntent(privateQuestion(question)).metric).toBe("absences");
+  vi.stubEnv("MACA_PROVIDER", "groq");
+  vi.stubEnv("GROQ_API_KEY", "test");
+  const fetch = vi.fn();
+  vi.stubGlobal("fetch", fetch);
+  const result = await askMaca(
+    { ...payload(), question, book_id: crypto.randomUUID() },
+    "session",
+  );
+  expect(result).toMatchObject({
+    metric: "absences",
+    source: expect.stringContaining("interno"),
+    fallback: null,
+  });
+  expect(result.text).toContain("No hay asistencias registradas");
+  expect(fetch).not.toHaveBeenCalled();
+});
+it("ordena ausencias reales y separa pendientes, justificadas y suspensiones", () => {
+  const b = fixture(0);
+  b.enrollments[2].full_name = "Ana";
+  b.enrollments[3].full_name = "Bea";
+  b.attendance.push(
+    { enrollment_id: "0-2", date: "2026-06-08", slot: 0, status: "absent" },
+    { enrollment_id: "0-3", date: "2026-06-01", slot: 0, status: "absent" },
+  );
+  const result = analyze([b], "2026-06-01", "2026-06-30", "absences");
+  expect(result.absenceLeader).toEqual({ name: "Ana", absent: 2, ties: 1 });
+  expect(result.rows).toHaveLength(2);
+  expect(result.rows[0]).toMatchObject({
+    Estudiante: "Ana",
+    Ausencias: 2,
+    Justificadas: 0,
+    Pendientes: 3,
+  });
+  b.suspensions.push({
+    id: "s",
+    scope: "center",
+    target_id: null,
+    start_date: "2026-06-08",
+    end_date: "2026-06-08",
+    reason: "Cierre",
+  });
+  const suspended = analyze([b], "2026-06-01", "2026-06-30", "absences");
+  expect(suspended.absenceLeader).toMatchObject({ absent: 1, ties: 2 });
+  expect(suspended.rows[0]).toMatchObject({ Ausencias: 1, Suspendidas: 1 });
+});
+it("agrupa al mismo estudiante entre libros sin confundir homónimos", () => {
+  const a = fixture(0),
+    b = fixture(1);
+  a.enrollments[2].full_name = "Ana";
+  b.enrollments[2].student_id = a.enrollments[2].student_id;
+  const result = analyze([a, b], "2026-06-01", "2026-06-30", "absences");
+  expect(result.rows).toHaveLength(1);
+  expect(result.absenceLeader).toEqual({ name: "Ana", absent: 2, ties: 1 });
+  b.enrollments[2].student_id = "otra-persona";
+  b.enrollments[2].full_name = "Ana";
+  expect(
+    analyze([a, b], "2026-06-01", "2026-06-30", "absences").absenceLeader?.ties,
+  ).toBe(2);
 });

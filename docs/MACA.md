@@ -96,3 +96,7 @@ FROM maca_requests GROUP BY 1 ORDER BY 1 DESC;
 ```
 
 La interpretación aplica reglas locales de prioridad para aprobaciones, superposiciones y evolución; una clasificación del modelo no puede confundir esas consultas con asistencia pendiente.
+
+## Ausencias por estudiante
+
+«¿Qué estudiante falta más?» y «¿Quién tiene más ausencias?» se resuelven directamente en el servidor, sin llamadas a Groq o Gemini. Se agrupan matrículas por el identificador del estudiante entre libros, se ordenan ausencias registradas y se indican empates. Pendientes, justificadas y suspensiones se muestran separados y no aumentan el ranking. Los nombres aparecen únicamente en la respuesta administrativa. Sin rango explícito se consulta el mes en curso hasta hoy; la respuesta incluye las fechas. Los filtros de profesor y libro siguen aplicándose. No tener marcas o no tener ausencias se comunica explícitamente.

@@ -68,6 +68,15 @@ it.skipIf(!enabled)(
           "INSERT INTO attendance(lesson_id,status) VALUES($1,'present')",
           [lesson],
         );
+        const absence = randomUUID();
+        await c.query(
+          "INSERT INTO lessons(id,enrollment_id,date,slot,time) VALUES($1,$2,'2026-06-08',0,'15:00')",
+          [absence, enrollments[0]],
+        );
+        await c.query(
+          "INSERT INTO attendance(lesson_id,status) VALUES($1,'absent')",
+          [absence],
+        );
         const data = (await loadAdminBooks(c)).filter((b) =>
           books.includes(b.book.id),
         );
@@ -86,9 +95,28 @@ it.skipIf(!enabled)(
         expect(summary).toMatchObject({
           count: sql.count,
           present: 1,
-          pending: 7,
+          absent: 1,
+          pending: 6,
           suspended: 2,
-          percentage: 100,
+          percentage: 50,
+        });
+        const ranking = analyze(data, "2026-06-01", "2026-06-30", "absences");
+        const absences = (
+          await c.query(
+            "SELECT e.student_id,count(*)::int AS count FROM attendance a JOIN lessons l ON l.id=a.lesson_id JOIN enrollments e ON e.id=l.enrollment_id WHERE e.book_id=ANY($1::uuid[]) AND l.date BETWEEN $2::date AND $3::date AND a.status='absent' GROUP BY e.student_id ORDER BY count(*) DESC",
+            [books, "2026-06-01", "2026-06-30"],
+          )
+        ).rows;
+        expect(ranking.rows).toHaveLength(1);
+        expect(ranking.absenceLeader).toMatchObject({
+          absent: absences[0].count,
+          ties: 1,
+        });
+        expect(ranking.rows[0]).toMatchObject({
+          Estudiante: "Prueba",
+          Ausencias: 1,
+          Pendientes: 2,
+          Suspendidas: 1,
         });
         throw rollback;
       }),
