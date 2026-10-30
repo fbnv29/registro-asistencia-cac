@@ -1,0 +1,2845 @@
+import React, {
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  type FormEvent,
+  type ReactNode,
+} from "react";
+import {
+  BookOpen,
+  Plus,
+  LockKeyhole,
+  ArrowLeft,
+  LogOut,
+  Settings,
+  CalendarDays,
+  Users,
+  ClipboardCheck,
+  ChartNoAxesCombined,
+  ChevronLeft,
+  ChevronRight,
+  Check,
+  X,
+  Search,
+  Download,
+  Clock3,
+  ShieldCheck,
+  Pencil,
+  CircleHelp,
+} from "lucide-react";
+import { api, apiBlob, ApiError } from "./api";
+import { markDraft, confirmLeave } from "./drafts";
+import EntityManager from "./EntityManager";
+import RequestList from "./RequestList";
+import {
+  addDays,
+  days,
+  labels,
+  lessonsFor,
+  localToday,
+  monday,
+  shortDate,
+  summarize,
+  weeks,
+  isRetired,
+  vacantSlots,
+  type Book,
+  type BookData,
+  type Enrollment,
+  type Lesson,
+  type Mark,
+  type Period,
+  type Slot,
+  type Status,
+  type Suspension,
+  type Teacher,
+} from "./domain";
+type Access = { kind: "admin" | "creator" | "book"; book_id: string | null };
+type Catalog = {
+  books: Book[];
+  teachers: Teacher[];
+  periods: Period[];
+  environment: string;
+};
+function Alert({ children }: { children: ReactNode }) {
+  return (
+    <div className="alert" role="alert">
+      {children}
+    </div>
+  );
+}
+function Field({ label, children }: { label: string; children: ReactNode }) {
+  const fieldId = useId();
+  return (
+    <label className="field">
+      <span id={fieldId}>{label}</span>
+      {React.isValidElement(children)
+        ? React.cloneElement(
+            children as React.ReactElement<{ "aria-labelledby"?: string }>,
+            { "aria-labelledby": fieldId },
+          )
+        : children}
+    </label>
+  );
+}
+function Modal({
+  title,
+  onClose,
+  children,
+}: {
+  title: string;
+  onClose: () => void;
+  children: ReactNode;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  const titleId = useId();
+  useEffect(() => {
+    const previous = document.activeElement as HTMLElement;
+    const root = ref.current;
+    root?.querySelector<HTMLElement>("input,select,button")?.focus();
+    function key(e: KeyboardEvent) {
+      if (root && !root.contains(document.activeElement)) return;
+      if (e.key === "Escape" && confirmLeave()) onClose();
+      if (e.key === "Tab" && root) {
+        const items = Array.from(
+          root.querySelectorAll<HTMLElement>(
+            "button:not(:disabled),input:not(:disabled),select:not(:disabled),textarea:not(:disabled),a[href]",
+          ),
+        );
+        const first = items[0],
+          last = items.at(-1);
+        if (e.shiftKey && document.activeElement === first) {
+          e.preventDefault();
+          last?.focus();
+        } else if (!e.shiftKey && document.activeElement === last) {
+          e.preventDefault();
+          first?.focus();
+        }
+      }
+    }
+    document.addEventListener("keydown", key);
+    return () => {
+      document.removeEventListener("keydown", key);
+      previous?.focus();
+    };
+  }, []);
+  return (
+    <div
+      className="overlay"
+      onClick={(e) => {
+        if (e.target === e.currentTarget && confirmLeave()) onClose();
+      }}
+    >
+      <div
+        className="modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        ref={ref}
+      >
+        <div className="modal-head">
+          <h2 id={titleId}>{title}</h2>
+          <button
+            className="icon-button"
+            aria-label="Cerrar"
+            onClick={() => {
+              if (confirmLeave()) onClose();
+            }}
+          >
+            <X />
+          </button>
+        </div>
+        {children}
+      </div>
+    </div>
+  );
+}
+function SubmitForm({
+  children,
+  onSubmit,
+  label = "Guardar",
+  onDone,
+}: {
+  children: ReactNode;
+  onSubmit: (form: FormData) => Promise<unknown>;
+  label?: string;
+  onDone?: () => void;
+}) {
+  const [busy, setBusy] = useState(false),
+    [error, setError] = useState("");
+  const draft = useRef({});
+  useEffect(() => () => markDraft(draft.current, false), []);
+  return (
+    <form
+      onChange={() => markDraft(draft.current, true)}
+      onSubmit={async (e: FormEvent<HTMLFormElement>) => {
+        e.preventDefault();
+        const form = new FormData(e.currentTarget);
+        setBusy(true);
+        setError("");
+        try {
+          markDraft(draft.current, true);
+          await onSubmit(form);
+          markDraft(draft.current, false);
+          onDone?.();
+        } catch (e) {
+          setError((e as Error).message);
+        } finally {
+          setBusy(false);
+        }
+      }}
+    >
+      {children}
+      {error && <Alert>{error}</Alert>}
+      <button className="button primary form-submit" disabled={busy}>
+        {busy ? "Guardando…" : label}
+      </button>
+    </form>
+  );
+}
+function PasswordDialog({
+  kind,
+  book,
+  onClose,
+  onLogin,
+}: {
+  kind: Access["kind"];
+  book?: Book;
+  onClose: () => void;
+  onLogin: (a: Access) => void;
+}) {
+  return (
+    <Modal
+      title={
+        kind === "admin"
+          ? "Administración"
+          : kind === "creator"
+            ? "Crear un libro"
+            : book!.discipline
+      }
+      onClose={onClose}
+    >
+      <div className="password-intro">
+        <span className="lock-symbol">
+          <LockKeyhole size={26} />
+        </span>
+        <p>
+          {kind === "book"
+            ? `Libro de ${book!.teacher_name}. Ingresa la contraseña para continuar.`
+            : kind === "creator"
+              ? "Ingresa la contraseña de creación de libros."
+              : "Ingresa la contraseña de administración del CAC."}
+        </p>
+      </div>
+      <SubmitForm
+        label="Entrar"
+        onSubmit={async (f) => {
+          const a = await api<Access>("/login", {
+            kind,
+            book_id: book?.id,
+            password: f.get("password"),
+          });
+          onLogin(a);
+        }}
+      >
+        <Field label="Contraseña">
+          <input
+            name="password"
+            type="password"
+            required
+            maxLength={128}
+            autoComplete="current-password"
+            placeholder="Escribe tu contraseña"
+          />
+        </Field>
+      </SubmitForm>
+    </Modal>
+  );
+}
+function SlotsFields({ count, initial }: { count: number; initial?: Slot[] }) {
+  return (
+    <div className="slots-fields">
+      {Array.from({ length: count }, (_, i) => (
+        <div className="slot-fields" key={i}>
+          <span className="slot-number">Sesión {i + 1}</span>
+          <Field label="Día">
+            <select name={`day${i}`} defaultValue={initial?.[i]?.day ?? i}>
+              {days.map((d, i) => (
+                <option value={i} key={d}>
+                  {d}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Hora">
+            <input
+              type="time"
+              required
+              name={`time${i}`}
+              defaultValue={initial?.[i]?.time || "15:00"}
+            />
+          </Field>
+        </div>
+      ))}
+    </div>
+  );
+}
+const readSlots = (f: FormData, count: number) =>
+  Array.from({ length: count }, (_, i) => ({
+    day: Number(f.get(`day${i}`)),
+    time: String(f.get(`time${i}`)),
+  }));
+function CreateBook({
+  catalog,
+  onClose,
+  onDone,
+  requestFor,
+}: {
+  catalog: Catalog;
+  requestFor?: { bookId: string; teacherId: string };
+  onClose: () => void;
+  onDone: (id: string) => void;
+}) {
+  return (
+    <Modal
+      title={requestFor ? "Proponer nuevo libro" : "Un nuevo libro de clases"}
+      onClose={onClose}
+    >
+      <p className="muted">
+        {requestFor
+          ? "Administración revisará esta propuesta antes de crear el libro."
+          : "Completa los datos para crear el libro de clases."}
+      </p>
+      {!catalog.teachers.length || !catalog.periods.length ? (
+        <Alert>
+          Administración debe agregar profesores y un período lectivo antes de
+          crear libros.
+        </Alert>
+      ) : (
+        <SubmitForm
+          label={requestFor ? "Enviar solicitud" : "Crear libro"}
+          onSubmit={async (f) => {
+            const input = {
+              teacher_id: f.get("teacher_id"),
+              period_id: f.get("period_id"),
+              discipline: f.get("discipline"),
+              sessions_per_week: Number(f.get("sessions")),
+              password: f.get("password"),
+            };
+            const result = await api(
+              requestFor ? `/books/${requestFor.bookId}/requests` : "/books",
+              requestFor ? { kind: "book.create", data: input } : input,
+            );
+            onDone(result.id);
+          }}
+        >
+          <Field label="Tu nombre">
+            <select required name="teacher_id">
+              {catalog.teachers
+                .filter(
+                  (t) =>
+                    !t.archived_at &&
+                    (!requestFor || t.id === requestFor.teacherId),
+                )
+                .map((t) => (
+                  <option value={t.id} key={t.id}>
+                    {t.name}
+                  </option>
+                ))}
+            </select>
+          </Field>
+          <Field label="Disciplina">
+            <input
+              name="discipline"
+              placeholder="Por ejemplo, Teclado"
+              required
+              maxLength={120}
+            />
+          </Field>
+          <div className="two-fields">
+            <Field label="Período lectivo">
+              <select name="period_id">
+                {catalog.periods
+                  .filter((p) => !p.archived_at)
+                  .map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name}
+                    </option>
+                  ))}
+              </select>
+            </Field>
+            <Field label="Sesiones por semana">
+              <input
+                type="number"
+                name="sessions"
+                min={1}
+                max={7}
+                defaultValue={1}
+                required
+              />
+            </Field>
+          </div>
+          <Field label="Contraseña de este libro">
+            <input
+              name="password"
+              type="password"
+              minLength={6}
+              maxLength={128}
+              required
+              autoComplete="new-password"
+            />
+          </Field>
+          <p className="hint">
+            Al menos 6 caracteres. Administración puede restablecerla si la
+            olvidas.
+          </p>
+        </SubmitForm>
+      )}
+    </Modal>
+  );
+}
+function StudentForm({
+  data,
+  student,
+  onClose,
+  onDone,
+  canRetire = false,
+  propose = false,
+}: {
+  data: BookData;
+  canRetire?: boolean;
+  propose?: boolean;
+  student?: Enrollment;
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const [fromStart, setFromStart] = useState(!student);
+  return (
+    <Modal
+      title={student ? "Editar estudiante" : "Agregar estudiante"}
+      onClose={onClose}
+    >
+      {propose && (
+        <p className="proposal-note">
+          Este cambio requiere aprobación. El libro seguirá igual hasta que
+          administración lo confirme.
+        </p>
+      )}
+      <SubmitForm
+        onDone={onDone}
+        label={
+          propose
+            ? "Enviar solicitud"
+            : student
+              ? "Guardar cambios"
+              : "Agregar al libro"
+        }
+        onSubmit={(f) => {
+          const input = {
+            enrollment_id: student?.id,
+            full_name: f.get("full_name"),
+            joined_on:
+              student?.joined_on ||
+              (fromStart ? data.period.start_date : f.get("joined_on")),
+            ...(canRetire ? { left_on: f.get("left_on") || null } : {}),
+            ...(!student
+              ? { slots: readSlots(f, data.book.sessions_per_week) }
+              : {}),
+          };
+          return api(
+            propose
+              ? `/books/${data.book.id}/requests`
+              : `/admin/books/${data.book.id}/students`,
+            propose
+              ? {
+                  kind: student ? "student.update" : "student.create",
+                  data: input,
+                }
+              : input,
+          );
+        }}
+      >
+        <Field label="Nombre completo">
+          <input
+            name="full_name"
+            defaultValue={student?.full_name}
+            required
+            maxLength={120}
+            placeholder="Nombre y apellidos"
+          />
+        </Field>
+        {!student ? (
+          <>
+            <label className="checkbox">
+              <input
+                type="checkbox"
+                checked={fromStart}
+                onChange={(e) => setFromStart(e.target.checked)}
+              />{" "}
+              Está desde el inicio del período
+            </label>
+            {!fromStart && (
+              <Field label="Fecha de ingreso">
+                <input
+                  type="date"
+                  name="joined_on"
+                  required
+                  min={data.period.start_date}
+                  max={data.period.end_date}
+                  defaultValue={
+                    localToday() > data.period.end_date
+                      ? data.period.end_date
+                      : localToday() < data.period.start_date
+                        ? data.period.start_date
+                        : localToday()
+                  }
+                />
+              </Field>
+            )}
+            <h3>Horario semanal</h3>
+            <p className="hint">
+              Cada sesión tendrá su propia casilla de asistencia.
+            </p>
+            <SlotsFields count={data.book.sessions_per_week} />
+          </>
+        ) : (
+          <>
+            <p className="hint">
+              Ingreso: {shortDate(student.joined_on)}. El historial permanece en
+              el libro.
+            </p>
+            {canRetire && (
+              <>
+                <Field label="Fecha de retiro (opcional)">
+                  <input
+                    type="date"
+                    name="left_on"
+                    min={student.joined_on}
+                    max={data.period.end_date}
+                    defaultValue={student.left_on || ""}
+                  />
+                </Field>
+                <p className="hint">
+                  El retiro conserva su historial y libera el horario. Deja la
+                  fecha vacía si continúa en el taller.
+                </p>
+              </>
+            )}
+          </>
+        )}
+      </SubmitForm>
+    </Modal>
+  );
+}
+function ScheduleForm({
+  data,
+  student,
+  onClose,
+  onDone,
+  propose = false,
+}: {
+  data: BookData;
+  propose?: boolean;
+  student: Enrollment;
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const versions = data.schedules
+    .filter((s) => s.enrollment_id === student.id)
+    .sort((a, b) => b.effective_from.localeCompare(a.effective_from));
+  return (
+    <Modal title={`Horario de ${student.full_name}`} onClose={onClose}>
+      {propose && (
+        <p className="proposal-note">
+          Propón el horario y la fecha del cambio. Solo se aplicará después de
+          la aprobación administrativa.
+        </p>
+      )}
+      <SubmitForm
+        label={propose ? "Enviar solicitud" : "Guardar cambios"}
+        onDone={onDone}
+        onSubmit={(f) => {
+          const input = {
+            enrollment_id: student.id,
+            effective_from: f.get("effective_from"),
+            slots: readSlots(f, data.book.sessions_per_week),
+          };
+          return api(
+            propose
+              ? `/books/${data.book.id}/requests`
+              : `/admin/books/${data.book.id}/schedule`,
+            propose ? { kind: "schedule.update", data: input } : input,
+          );
+        }}
+      >
+        <p className="muted">
+          El horario anterior se conserva hasta la fecha del cambio.
+        </p>
+        <Field label="Aplicar desde">
+          <input
+            type="date"
+            required
+            name="effective_from"
+            min={student.joined_on}
+            max={student.left_on || data.period.end_date}
+            defaultValue={
+              [student.joined_on, localToday()].sort().at(-1)! >
+              (student.left_on || data.period.end_date)
+                ? student.left_on || data.period.end_date
+                : [student.joined_on, localToday()].sort().at(-1)
+            }
+          />
+        </Field>
+        <SlotsFields
+          count={data.book.sessions_per_week}
+          initial={
+            versions.find((v) => v.effective_from <= localToday())?.slots ||
+            versions.at(-1)?.slots
+          }
+        />
+      </SubmitForm>
+    </Modal>
+  );
+}
+function StudentNoteForm({
+  data,
+  student,
+  onClose,
+  onDone,
+}: {
+  data: BookData;
+  student: Enrollment;
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const [revision, setRevision] = useState(student.note_revision || 0);
+  const [resolving, setResolving] = useState(false);
+  const [conflict, setConflict] = useState<any>(null);
+  return (
+    <Modal title={`Nota de ${student.full_name}`} onClose={onClose}>
+      <p className="muted">
+        Una nota breve para el registro del estudiante. Se guarda directamente,
+        sin aprobación.
+      </p>
+      {conflict && (
+        <Alert>
+          Otra sesión guardó: {conflict.note || "Sin nota"}.
+          <button type="button" className="button" onClick={onDone}>
+            Conservar dato actual
+          </button>
+          <button
+            type="button"
+            className="button"
+            onClick={() => {
+              setRevision(conflict.revision);
+              setResolving(true);
+              setConflict(null);
+            }}
+          >
+            Reemplazar por mi cambio (pulsa Guardar nota)
+          </button>
+        </Alert>
+      )}
+      <SubmitForm
+        label="Guardar nota"
+        onDone={onDone}
+        onSubmit={async (f) => {
+          try {
+            return await api(`/books/${data.book.id}/notes`, {
+              enrollment_id: student.id,
+              note: f.get("note") || "",
+              expected_revision: revision,
+              resolve_conflict: resolving,
+            });
+          } catch (error) {
+            if (error instanceof ApiError && error.code === "REVISION_CONFLICT")
+              setConflict(error.current);
+            throw error;
+          }
+        }}
+      >
+        <Field label="Nota breve">
+          <textarea
+            name="note"
+            rows={4}
+            maxLength={500}
+            defaultValue={student.note || ""}
+            placeholder="Por ejemplo: le gusta la música rock."
+          />
+        </Field>
+        <p className="hint">
+          Hasta 500 caracteres. Deja el campo vacío para quitar la nota.
+        </p>
+      </SubmitForm>
+    </Modal>
+  );
+}
+function AttendanceSymbol({ status }: { status: Status }) {
+  if (status === "present")
+    return (
+      <Check
+        className="attendance-symbol present"
+        aria-hidden="true"
+        strokeWidth={4}
+      />
+    );
+  if (status === "absent")
+    return (
+      <X
+        className="attendance-symbol absent"
+        aria-hidden="true"
+        strokeWidth={4}
+      />
+    );
+  if (status === "justified")
+    return (
+      <span className="attendance-symbol justified" aria-hidden="true">
+        J
+      </span>
+    );
+  return (
+    <span className={`attendance-symbol ${status}`} aria-hidden="true">
+      {status === "suspended" ? "—" : "·"}
+    </span>
+  );
+}
+function AttendanceGrid({
+  data,
+  setData,
+  onNote,
+}: {
+  data: BookData;
+  onNote: (student: Enrollment) => void;
+  setData: React.Dispatch<React.SetStateAction<BookData | null>>;
+}) {
+  const scroll = useRef<HTMLDivElement>(null);
+  const allWeeks = weeks(data.period);
+  const currentWeek = monday(localToday());
+  const [filter, setFilter] = useState("");
+  const [focusWeek, setFocusWeek] = useState(() => {
+    const today = monday(localToday());
+    return allWeeks.includes(today)
+      ? today
+      : today < allWeeks[0]
+        ? allWeeks[0]
+        : allWeeks.at(-1)!;
+  });
+  const [saves, setSaves] = useState<
+    Record<
+      string,
+      {
+        state: "saving" | "saved" | "error";
+        status: Mark | null;
+        message?: string;
+        current?: { revision: number; status: Mark | null };
+        lesson?: Lesson;
+      }
+    >
+  >({});
+  const all = lessonsFor(data),
+    lookup = new Map<string, Lesson[]>();
+  for (const l of all) {
+    const key = `${l.enrollment_id}/${monday(l.date)}/${l.slot}`;
+    lookup.set(key, [...(lookup.get(key) || []), l]);
+  }
+  useEffect(() => {
+    const target = scroll.current?.querySelector<HTMLElement>(
+      `[data-week="${focusWeek}"]`,
+    );
+    if (target && scroll.current) {
+      const studentWidth =
+        scroll.current.querySelector(".student-column")?.getBoundingClientRect()
+          .width || 230;
+      scroll.current.scrollLeft = target.offsetLeft - studentWidth;
+    }
+  }, [focusWeek]);
+  const draft = useRef({});
+  useEffect(() => {
+    markDraft(
+      draft.current,
+      Object.values(saves).some((v) => v.state !== "saved"),
+    );
+    return () => markDraft(draft.current, false);
+  }, [saves]);
+  async function save(lesson: Lesson, status: Mark | null, resolving = false) {
+    const key = `${lesson.enrollment_id}/${lesson.date}/${lesson.slot}`;
+    setSaves((v) => ({ ...v, [key]: { state: "saving", status } }));
+    try {
+      const result = await api(`/books/${data.book.id}/attendance`, {
+        enrollment_id: lesson.enrollment_id,
+        date: lesson.date,
+        slot: lesson.slot,
+        status,
+        expected_revision: lesson.revision || 0,
+        resolve_conflict: resolving,
+      });
+      setData((previous) =>
+        previous
+          ? {
+              ...previous,
+              attendance: [
+                ...previous.attendance.filter(
+                  (a) =>
+                    !(
+                      a.enrollment_id === lesson.enrollment_id &&
+                      a.date === lesson.date &&
+                      a.slot === lesson.slot
+                    ),
+                ),
+                ...[
+                  {
+                    enrollment_id: lesson.enrollment_id,
+                    date: lesson.date,
+                    slot: lesson.slot,
+                    status,
+                    revision: result.revision,
+                  },
+                ],
+              ],
+            }
+          : previous,
+      );
+      setSaves((v) => ({ ...v, [key]: { state: "saved", status } }));
+    } catch (e) {
+      setSaves((v) => ({
+        ...v,
+        [key]: {
+          state: "error",
+          status,
+          lesson,
+          message: (e as Error).message,
+          current:
+            e instanceof ApiError && e.code === "REVISION_CONFLICT"
+              ? e.current
+              : undefined,
+        },
+      }));
+    }
+  }
+  const saving = Object.values(saves).some((s) => s.state === "saving"),
+    errors = Object.values(saves).filter((s) => s.state === "error").length;
+  const totals = summarize(all.filter((l) => l.date <= localToday()));
+  return (
+    <>
+      <div className="section-heading">
+        <div>
+          <h2>Registro de asistencia</h2>
+          <p>Selecciona una casilla para registrar o corregir su asistencia.</p>
+        </div>
+        <div className={`save-status ${errors ? "failed" : ""}`} role="status">
+          {saving ? (
+            <>
+              <Clock3 size={16} /> Guardando…
+            </>
+          ) : errors ? (
+            <>
+              <X size={16} /> {errors} cambio(s) sin guardar
+            </>
+          ) : (
+            <>
+              <Check size={16} />{" "}
+              {Object.keys(saves).length ? "Cambios guardados" : "Libro al día"}
+            </>
+          )}
+        </div>
+      </div>
+      <div className="grid-toolbar">
+        <div className="search-field">
+          <Search size={18} />
+          <input
+            aria-label="Buscar estudiante"
+            placeholder="Buscar estudiante…"
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+          />
+        </div>
+        <div className="week-nav">
+          <button
+            className="icon-button"
+            aria-label="Semana anterior"
+            disabled={focusWeek === allWeeks[0]}
+            onClick={() =>
+              setFocusWeek(
+                allWeeks[Math.max(0, allWeeks.indexOf(focusWeek) - 1)],
+              )
+            }
+          >
+            <ChevronLeft />
+          </button>
+          <select
+            aria-label="Ir a semana"
+            value={focusWeek}
+            onChange={(e) => setFocusWeek(e.target.value)}
+          >
+            {allWeeks.map((w, i) => (
+              <option key={w} value={w}>
+                Semana {i + 1} · {shortDate(w)}
+              </option>
+            ))}
+          </select>
+          <button
+            className="icon-button"
+            aria-label="Semana siguiente"
+            disabled={focusWeek === allWeeks.at(-1)}
+            onClick={() =>
+              setFocusWeek(
+                allWeeks[
+                  Math.min(allWeeks.length - 1, allWeeks.indexOf(focusWeek) + 1)
+                ],
+              )
+            }
+          >
+            <ChevronRight />
+          </button>
+        </div>
+      </div>
+      {Object.entries(saves)
+        .filter(([, v]) => v.current)
+        .map(([key, v]) => (
+          <div className="alert" key={key}>
+            Otra sesión modificó la asistencia de{" "}
+            {
+              data.enrollments.find((e) => e.id === v.lesson?.enrollment_id)
+                ?.full_name
+            }
+            , {v.lesson?.date}. Actual:{" "}
+            {v.current!.status ? labels[v.current!.status] : "Pendiente"}.
+            <button
+              className="button"
+              onClick={() => {
+                void api<BookData>(`/books/${data.book.id}`)
+                  .then((d) => {
+                    setData(d);
+                    setSaves((prev) => ({
+                      ...prev,
+                      [key]: { ...v, state: "saved", current: undefined },
+                    }));
+                  })
+                  .catch((e) =>
+                    setSaves((prev) => ({
+                      ...prev,
+                      [key]: { ...v, message: e.message },
+                    })),
+                  );
+              }}
+            >
+              Conservar dato actual
+            </button>
+            <button
+              className="button"
+              onClick={() =>
+                void save(
+                  { ...v.lesson!, revision: v.current!.revision },
+                  v.status,
+                  true,
+                )
+              }
+            >
+              Reemplazar por mi cambio
+            </button>
+          </div>
+        ))}
+
+      <div className="legend">
+        {(
+          ["present", "absent", "justified", "suspended", "pending"] as const
+        ).map((s) => (
+          <span key={s}>
+            <AttendanceSymbol status={s} />
+            {labels[s]}
+          </span>
+        ))}
+      </div>
+      <div
+        className="attendance-scroll"
+        ref={scroll}
+        tabIndex={0}
+        aria-label="Cuadrícula de asistencia. Desplázate horizontalmente para ver más semanas."
+      >
+        <table
+          className="attendance-table"
+          data-sessions={data.book.sessions_per_week}
+        >
+          <thead>
+            <tr>
+              <th className="student-column">
+                <strong>ASISTENCIA</strong>
+                <span>{data.enrollments.length} estudiantes</span>
+              </th>
+              {allWeeks.map((w, i) => (
+                <th
+                  key={w}
+                  data-week={w}
+                  aria-current={currentWeek === w ? "date" : undefined}
+                  className={currentWeek === w ? "active-week" : ""}
+                >
+                  <span>SEMANA {i + 1}</span>
+                  <strong>
+                    {shortDate(w)} — {shortDate(addDays(w, 6))}
+                  </strong>
+                  <div className="session-heads">
+                    {Array.from(
+                      { length: data.book.sessions_per_week },
+                      (_, i) => (
+                        <small key={i}>Sesión {i + 1}</small>
+                      ),
+                    )}
+                  </div>
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {data.enrollments
+              .filter((e) =>
+                e.full_name
+                  .toLocaleLowerCase("es")
+                  .includes(filter.toLocaleLowerCase("es")),
+              )
+              .map((e, i) => (
+                <tr key={e.id}>
+                  <th scope="row" className="student-column">
+                    <span className="student-name">
+                      {e.full_name}
+                      <button
+                        className="student-note-button"
+                        aria-label={`Nota de ${e.full_name}`}
+                        title={e.note || "Agregar una nota breve"}
+                        onClick={() => onNote(e)}
+                      >
+                        <Pencil size={13} />
+                      </button>
+                      {e.note && (
+                        <small className="student-note-preview" title={e.note}>
+                          {e.note}
+                        </small>
+                      )}
+                      {e.left_on && (
+                        <small>Retiro: {shortDate(e.left_on)}</small>
+                      )}
+                    </span>
+                    <span className="row-number">{i + 1}</span>
+                  </th>
+                  {allWeeks.map((w) => (
+                    <td
+                      key={w}
+                      className={currentWeek === w ? "active-week" : ""}
+                    >
+                      <div className="session-cells">
+                        {Array.from(
+                          { length: data.book.sessions_per_week },
+                          (_, s) => {
+                            const cellLessons = lookup.get(`${e.id}/${w}/${s}`);
+                            if (!cellLessons)
+                              return (
+                                <span
+                                  className="no-session"
+                                  key={s}
+                                  title="Sin sesión en esta semana"
+                                >
+                                  —
+                                </span>
+                              );
+                            return (
+                              <div className="weekly-slot" key={s}>
+                                {cellLessons.map((lesson) => {
+                                  const key = `${e.id}/${lesson.date}/${s}`,
+                                    saveState = saves[key];
+                                  return (
+                                    <div
+                                      className="attendance-cell"
+                                      key={lesson.date}
+                                    >
+                                      {lesson.status === "suspended" ? (
+                                        <span
+                                          className="suspension-cell"
+                                          title={`${shortDate(lesson.date)} · ${lesson.reason}`}
+                                          role="img"
+                                          aria-label={`Suspendida: ${lesson.reason}, ${lesson.date}`}
+                                        >
+                                          <AttendanceSymbol status="suspended" />
+                                        </span>
+                                      ) : (
+                                        <>
+                                          <div
+                                            className={`symbol-control ${lesson.status} ${saveState?.state === "saving" ? "is-saving" : ""}`}
+                                            title={`${e.full_name} · ${lesson.date} · ${labels[lesson.status]}`}
+                                          >
+                                            <AttendanceSymbol
+                                              status={lesson.status}
+                                            />
+                                            <select
+                                              aria-label={`${e.full_name}, ${lesson.date}, sesión ${s + 1}`}
+                                              className={`symbol-select mark ${lesson.status}`}
+                                              value={
+                                                lesson.status === "pending"
+                                                  ? ""
+                                                  : lesson.status
+                                              }
+                                              disabled={
+                                                saveState?.state === "saving" ||
+                                                data.can_write === false
+                                              }
+                                              onChange={(event) =>
+                                                void save(
+                                                  lesson,
+                                                  (event.target
+                                                    .value as Mark) || null,
+                                                )
+                                              }
+                                            >
+                                              <option value="">
+                                                Pendiente
+                                              </option>
+                                              <option value="present">
+                                                Presente
+                                              </option>
+                                              <option value="absent">
+                                                Ausente
+                                              </option>
+                                              <option value="justified">
+                                                Justificada
+                                              </option>
+                                            </select>
+                                          </div>
+                                          {saveState?.state === "error" &&
+                                            !saveState.current && (
+                                              <small role="alert">
+                                                {saveState.message}
+                                              </small>
+                                            )}
+                                          {saveState?.state === "error" &&
+                                            !saveState.current && (
+                                              <button
+                                                className="retry"
+                                                title={saveState.message}
+                                                onClick={() =>
+                                                  void save(
+                                                    saveState.lesson || lesson,
+                                                    saveState.status,
+                                                  )
+                                                }
+                                              >
+                                                Reintentar
+                                              </button>
+                                            )}
+                                        </>
+                                      )}
+                                      <span className="cell-date">
+                                        {shortDate(lesson.date)}
+                                      </span>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            );
+                          },
+                        )}
+                      </div>
+                    </td>
+                  ))}
+                </tr>
+              ))}
+          </tbody>
+        </table>
+        {!data.enrollments.length && (
+          <div className="empty-state">
+            <Users size={30} />
+            <h3>Tu libro está listo para empezar</h3>
+            <p>
+              Agrega tu primer estudiante y su horario para pasar asistencia.
+            </p>
+          </div>
+        )}
+      </div>
+      <div className="grid-footer">
+        <span>
+          <CircleHelp size={16} /> Puedes corregir cualquier semana. Las
+          casillas se guardan al elegir un estado.
+        </span>
+        <span>{totals.pending} sesiones pendientes hasta hoy</span>
+      </div>
+    </>
+  );
+}
+function Reports({ data }: { data: BookData }) {
+  const [from, setFrom] = useState(data.period.start_date),
+    [to, setTo] = useState(
+      localToday() < data.period.end_date
+        ? localToday() < data.period.start_date
+          ? data.period.start_date
+          : localToday()
+        : data.period.end_date,
+    ),
+    [error, setError] = useState(""),
+    [busy, setBusy] = useState(false);
+  const all = lessonsFor(data, from, to),
+    total = summarize(all);
+  async function download() {
+    setBusy(true);
+    setError("");
+    try {
+      const blob = await apiBlob(
+        `/books/${data.book.id}/export?from=${from}&to=${to}`,
+      );
+      const href = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = href;
+      a.download = "asistencia-cac.xlsx";
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(href), 5000);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <>
+      <div className="section-heading">
+        <div>
+          <h2>Resumen de asistencia</h2>
+          <p>
+            Presentes y justificados cuentan como asistencia. Las suspensiones
+            quedan fuera.
+          </p>
+        </div>
+        <button
+          className="button primary"
+          onClick={() => void download()}
+          disabled={busy || from > to}
+        >
+          <Download size={18} />
+          {busy ? "Preparando…" : "Exportar Excel"}
+        </button>
+      </div>
+      <div className="report-dates">
+        <Field label="Desde">
+          <input
+            type="date"
+            value={from}
+            onChange={(e) => setFrom(e.target.value)}
+            min={data.period.start_date}
+            max={to}
+          />
+        </Field>
+        <Field label="Hasta">
+          <input
+            type="date"
+            value={to}
+            onChange={(e) => setTo(e.target.value)}
+            min={from}
+            max={data.period.end_date}
+          />
+        </Field>
+      </div>
+      {error && <Alert>{error}</Alert>}
+      <div className="stats">
+        {[
+          [
+            "Asistencia",
+            total.percentage === null
+              ? "Sin registros"
+              : `${total.percentage}%`,
+          ],
+          ["Presentes", total.present],
+          ["Justificadas", total.justified],
+          ["Ausentes", total.absent],
+          ["Pendientes", total.pending],
+          ["Suspendidas", total.suspended],
+        ].map(([label, value]) => (
+          <div key={label}>
+            <span>{label}</span>
+            <strong>{value}</strong>
+          </div>
+        ))}
+      </div>
+      <div className="table-scroll">
+        <table className="plain-table">
+          <thead>
+            <tr>
+              <th>Estudiante</th>
+              <th>Presente</th>
+              <th>Justificada</th>
+              <th>Ausente</th>
+              <th>Pendiente</th>
+              <th>Suspendida</th>
+              <th>Asistencia</th>
+            </tr>
+          </thead>
+          <tbody>
+            {data.enrollments.map((e) => {
+              const s = summarize(all.filter((l) => l.enrollment_id === e.id));
+              return (
+                <tr key={e.id}>
+                  <th>{e.full_name}</th>
+                  <td>{s.present}</td>
+                  <td>{s.justified}</td>
+                  <td>{s.absent}</td>
+                  <td>{s.pending}</td>
+                  <td>{s.suspended}</td>
+                  <td>
+                    <strong>
+                      {s.percentage === null
+                        ? "Sin registros"
+                        : `${s.percentage}%`}
+                    </strong>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <p className="hint">
+        Los pendientes se muestran aparte y no participan en el porcentaje. Cada
+        estudiante se calcula según su matrícula y sus sesiones.
+      </p>
+    </>
+  );
+}
+function BookView({
+  bookId,
+  onBack,
+  access,
+  onAdmin,
+  initialTab = "attendance",
+  embedded = false,
+}: {
+  bookId: string;
+  initialTab?: string;
+  embedded?: boolean;
+  onBack: () => void;
+  access: Access | null;
+  onAdmin: () => void;
+}) {
+  const [data, setData] = useState<BookData | null>(null),
+    [error, setError] = useState(""),
+    [tab, setTab] = useState(initialTab),
+    [studentModal, setStudentModal] = useState<Enrollment | "new" | null>(null),
+    [scheduleModal, setScheduleModal] = useState<Enrollment | null>(null),
+    [studentList, setStudentList] = useState("active"),
+    [scheduleDate, setScheduleDate] = useState(localToday()),
+    [proposalNotice, setProposalNotice] = useState(""),
+    [requestVersion, setRequestVersion] = useState(0),
+    [bookProposal, setBookProposal] = useState<Catalog | null>(null),
+    [noteStudent, setNoteStudent] = useState<Enrollment | null>(null);
+  const refresh = (recenter = false) =>
+    api<BookData>(`/books/${bookId}`)
+      .then((d) => {
+        setData(d);
+        if (recenter)
+          setScheduleDate(
+            localToday() < d.period.start_date
+              ? d.period.start_date
+              : localToday() > d.period.end_date
+                ? d.period.end_date
+                : localToday(),
+          );
+        setError("");
+      })
+      .catch((e) => setError(e.message));
+  useEffect(() => {
+    void refresh(true);
+  }, [bookId]);
+  useEffect(() => {
+    const onFocus = () => {
+      if (!studentModal && !scheduleModal && !bookProposal) void refresh();
+    };
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === "visible") onFocus();
+    }, 30000);
+    window.addEventListener("focus", onFocus);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("focus", onFocus);
+    };
+  }, [bookId, studentModal, scheduleModal, bookProposal]);
+  async function done() {
+    await refresh();
+    setStudentModal(null);
+    setScheduleModal(null);
+    if (!embedded) {
+      setProposalNotice(
+        "Solicitud enviada a administración. El cambio aparecerá cuando sea aprobado.",
+      );
+      setRequestVersion((v) => v + 1);
+    }
+  }
+  if (!data)
+    return (
+      <div className={embedded ? "admin-workspace-book" : "container"}>
+        {!embedded && (
+          <button
+            className="button"
+            onClick={() => {
+              if (confirmLeave()) onBack();
+            }}
+          >
+            <ArrowLeft /> Volver
+          </button>
+        )}
+        {error ? (
+          <>
+            <Alert>{error}</Alert>
+            <button className="button" onClick={() => void refresh()}>
+              Reintentar
+            </button>
+          </>
+        ) : (
+          <p>Cargando tu libro…</p>
+        )}
+      </div>
+    );
+  const tabs = [
+    ["attendance", "Asistencia", ClipboardCheck],
+    ["schedule", "Horario", CalendarDays],
+    ["students", "Estudiantes", Users],
+    ["reports", "Resumen", ChartNoAxesCombined],
+    ["requests", "Solicitudes", Clock3],
+  ] as const;
+  const Container = embedded ? "div" : "main";
+  return (
+    <Container
+      className={
+        embedded ? "admin-workspace-book book-page" : "container book-page"
+      }
+    >
+      {!embedded && (
+        <button
+          className="back-link"
+          onClick={() => {
+            if (confirmLeave()) onBack();
+          }}
+        >
+          <ArrowLeft size={17} /> Todos los libros
+        </button>
+      )}
+      {data.can_write === false && (
+        <Alert>
+          Libro archivado · Solo consulta. Administración debe restaurarlo para
+          modificarlo.
+        </Alert>
+      )}
+      <div className="book-title">
+        <div className="book-title-icon">
+          <BookOpen size={31} />
+        </div>
+        <div>
+          <span className="eyebrow">LIBRO DE CLASES · {data.period.name}</span>
+          <h1>{data.book.discipline}</h1>
+          <p>
+            {data.book.teacher_name} <span>·</span>{" "}
+            {data.book.sessions_per_week}{" "}
+            {data.book.sessions_per_week === 1 ? "sesión" : "sesiones"} por
+            semana <span>·</span> {data.book.duration_minutes} min por sesión
+          </p>
+        </div>
+        <button
+          className="button primary add-student"
+          disabled={data.can_write === false}
+          onClick={() => setStudentModal("new")}
+        >
+          <Plus size={19} /> Agregar estudiante
+        </button>
+      </div>
+      {!embedded && (
+        <div className="book-tabs" role="tablist" aria-label="Hojas del libro">
+          {tabs.map(([key, label, Icon]) => (
+            <button
+              role="tab"
+              aria-selected={tab === key}
+              key={key}
+              onClick={() => {
+                if (!confirmLeave()) return;
+                setTab(key);
+                void refresh();
+              }}
+              className={tab === key ? "selected" : ""}
+            >
+              <Icon size={19} />
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
+      <section
+        className="book-sheet"
+        role="tabpanel"
+        aria-label={tabs.find((t) => t[0] === tab)?.[1]}
+      >
+        {error && <Alert>{error}</Alert>}
+        {proposalNotice && (
+          <div className="success" role="status">
+            <span>{proposalNotice}</span>
+            <button className="button small" onClick={() => setTab("requests")}>
+              Ver solicitudes
+            </button>
+          </div>
+        )}
+        {tab === "requests" && (
+          <RequestList
+            bookId={bookId}
+            onRefresh={refresh}
+            version={requestVersion}
+            onProposeBook={
+              access?.kind !== "admin" && data.can_write !== false
+                ? () =>
+                    api<Catalog>("/catalog")
+                      .then(setBookProposal)
+                      .catch((e) => setError(e.message))
+                : undefined
+            }
+          />
+        )}
+        {tab === "attendance" && (
+          <AttendanceGrid
+            data={data}
+            setData={setData}
+            onNote={(e) => {
+              if (data.can_write !== false) setNoteStudent(e);
+            }}
+          />
+        )}{" "}
+        {tab === "reports" && <Reports data={data} />}{" "}
+        {tab === "students" && (
+          <>
+            <div className="section-heading">
+              <div>
+                <h2>Estudiantes del libro</h2>
+                <p>
+                  {access?.kind === "admin"
+                    ? "Administra las matrículas y conserva el historial de retiros."
+                    : "Estudiantes activos de este curso."}
+                </p>
+              </div>
+            </div>
+            {access?.kind === "admin" && (
+              <div
+                className="student-status-tabs"
+                role="group"
+                aria-label="Estado de matrícula"
+              >
+                {[
+                  ["active", "Activos"],
+                  ["retired", "Retirados"],
+                  ["all", "Todos"],
+                ].map(([key, label]) => (
+                  <button
+                    className={studentList === key ? "selected" : ""}
+                    aria-pressed={studentList === key}
+                    key={key}
+                    onClick={() => setStudentList(key)}
+                  >
+                    {label}{" "}
+                    <span>
+                      {
+                        data.enrollments.filter(
+                          (e) =>
+                            key === "all" ||
+                            (key === "retired" ? isRetired(e) : !isRetired(e)),
+                        ).length
+                      }
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
+            <div className="student-list">
+              {data.enrollments
+                .filter(
+                  (e) =>
+                    access?.kind !== "admin" ||
+                    studentList === "all" ||
+                    (studentList === "retired" ? isRetired(e) : !isRetired(e)),
+                )
+                .map((e) => (
+                  <div key={e.id}>
+                    <span className="avatar">{e.full_name[0]}</span>
+                    <div>
+                      <strong>{e.full_name}</strong>
+                      {e.note && (
+                        <small className="student-note-preview">{e.note}</small>
+                      )}
+                      {isRetired(e) && (
+                        <span className="retired-badge">Retirado</span>
+                      )}
+                      <small>
+                        Desde {shortDate(e.joined_on)}
+                        {e.left_on ? ` · Retiro ${shortDate(e.left_on)}` : ""}
+                      </small>
+                    </div>
+                    <button
+                      className="button small"
+                      disabled={data.can_write === false}
+                      onClick={() => setStudentModal(e)}
+                    >
+                      <Pencil size={16} />{" "}
+                      {access?.kind === "admin" ? "Editar / retiro" : "Editar"}
+                    </button>
+                    <button
+                      className="button small"
+                      disabled={data.can_write === false}
+                      onClick={() => setNoteStudent(e)}
+                    >
+                      <Pencil size={15} /> Nota
+                    </button>
+                    <button
+                      className="button small"
+                      disabled={data.can_write === false}
+                      onClick={() => setScheduleModal(e)}
+                    >
+                      <Clock3 size={16} /> Horario
+                    </button>
+                  </div>
+                ))}
+            </div>
+            {!data.enrollments.length && (
+              <p className="empty-state">
+                Aún no hay estudiantes. Usa «Agregar estudiante» para comenzar.
+              </p>
+            )}
+          </>
+        )}{" "}
+        {tab === "schedule" && (
+          <>
+            <div className="section-heading">
+              <div>
+                <h2>Horario semanal</h2>
+                <p>
+                  La distribución que se repite cada semana. Cada estudiante
+                  tiene su propia asistencia.
+                </p>
+              </div>
+              <Field label="Ver horario vigente al">
+                <input
+                  type="date"
+                  min={data.period.start_date}
+                  max={data.period.end_date}
+                  value={scheduleDate}
+                  onChange={(e) => setScheduleDate(e.target.value)}
+                />
+              </Field>
+            </div>
+            <div className="schedule-grid">
+              {days.map((day, index) => (
+                <section key={day}>
+                  <h3>{day}</h3>
+                  {data.enrollments
+                    .filter(
+                      (e) =>
+                        e.joined_on <= scheduleDate &&
+                        !isRetired(e, scheduleDate),
+                    )
+                    .flatMap((e) => {
+                      const version = data.schedules
+                        .filter(
+                          (s) =>
+                            s.enrollment_id === e.id &&
+                            s.effective_from <= scheduleDate,
+                        )
+                        .sort((a, b) =>
+                          b.effective_from.localeCompare(a.effective_from),
+                        )[0];
+                      return (version?.slots || [])
+                        .filter((s) => s.day === index)
+                        .map((s, i) => ({ e, s, key: `${e.id}/${i}` }));
+                    })
+                    .sort((a, b) => a.s.time.localeCompare(b.s.time))
+                    .map(({ e, s, key }) => (
+                      <button
+                        key={key}
+                        disabled={data.can_write === false}
+                        onClick={() => setScheduleModal(e)}
+                      >
+                        <strong>{s.time}</strong>
+                        <span>{e.full_name}</span>
+                        <small>{data.book.duration_minutes} minutos</small>
+                        <span className="schedule-edit-cue">
+                          <Pencil size={12} />
+                          {access?.kind === "admin"
+                            ? "Editar horario"
+                            : "Proponer cambio"}
+                        </span>
+                      </button>
+                    ))}
+                  {access?.kind === "admin" &&
+                    vacantSlots(data, scheduleDate)
+                      .filter((slot) => slot.day === index)
+                      .map((slot) => (
+                        <div
+                          className="available-slot"
+                          key={`free/${slot.time}`}
+                        >
+                          <strong>{slot.time}</strong>
+                          <span>Disponible</span>
+                          <small>Cupo liberado</small>
+                        </div>
+                      ))}
+                </section>
+              ))}
+            </div>
+            <p className="hint">
+              Selecciona un estudiante para cambiar su horario desde una fecha
+              específica.
+            </p>
+          </>
+        )}
+      </section>
+      {!embedded && access?.kind === "admin" && (
+        <button
+          className="back-link"
+          onClick={() => {
+            if (confirmLeave()) onAdmin();
+          }}
+        >
+          <Settings size={16} /> Administrar este libro y sus suspensiones
+        </button>
+      )}
+      {studentModal && (
+        <StudentForm
+          data={data}
+          canRetire={true}
+          propose={!embedded}
+          student={studentModal === "new" ? undefined : studentModal}
+          onClose={() => setStudentModal(null)}
+          onDone={() => void done()}
+        />
+      )}{" "}
+      {scheduleModal && (
+        <ScheduleForm
+          data={data}
+          student={scheduleModal}
+          propose={!embedded}
+          onClose={() => setScheduleModal(null)}
+          onDone={() => void done()}
+        />
+      )}
+      {noteStudent && (
+        <StudentNoteForm
+          data={data}
+          student={noteStudent}
+          onClose={() => setNoteStudent(null)}
+          onDone={() => {
+            setNoteStudent(null);
+            void refresh();
+          }}
+        />
+      )}
+      {bookProposal && (
+        <CreateBook
+          catalog={bookProposal}
+          requestFor={{ bookId, teacherId: data.book.teacher_id }}
+          onClose={() => setBookProposal(null)}
+          onDone={() => {
+            setBookProposal(null);
+            setRequestVersion((v) => v + 1);
+            setProposalNotice("Propuesta de libro enviada a administración.");
+          }}
+        />
+      )}
+    </Container>
+  );
+}
+function AdminWorkspace({ catalog, mode }: { catalog: Catalog; mode: string }) {
+  const [periodId, setPeriodId] = useState(catalog.periods[0]?.id || "");
+  const period = catalog.periods.find((p) => p.id === periodId);
+  const [from, setFrom] = useState(period?.start_date || localToday());
+  const [to, setTo] = useState(
+    period
+      ? localToday() < period.start_date
+        ? period.start_date
+        : localToday() > period.end_date
+          ? period.end_date
+          : localToday()
+      : localToday(),
+  );
+  const [selected, setSelected] = useState("");
+  const [detail, setDetail] = useState("");
+  const [books, setBooks] = useState<BookData[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  async function load() {
+    setLoading(true);
+    setError("");
+    try {
+      const result = await api<{ books: BookData[] }>("/admin/overview");
+      setBooks(result.books);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setLoading(false);
+    }
+  }
+  useEffect(() => {
+    if (mode === "overview") void load();
+  }, [mode]);
+  const available = catalog.books.filter((b) => b.period_id === periodId);
+  const selectedId = available.some((b) => b.id === selected)
+    ? selected
+    : available[0]?.id;
+  const data = books.filter((b) => b.period.id === periodId);
+  const allLessons = data.flatMap((d) => lessonsFor(d, from, to));
+  const totals = summarize(allLessons);
+  const active = data.reduce(
+    (n, d) => n + d.enrollments.filter((e) => !isRetired(e)).length,
+    0,
+  );
+  const retired = data.reduce(
+    (n, d) => n + d.enrollments.filter((e) => isRetired(e)).length,
+    0,
+  );
+  return (
+    <div className="admin-workspace">
+      <div className="workspace-heading">
+        <div>
+          <h2>
+            {mode === "overview"
+              ? "Asistencia del centro"
+              : mode === "schedules"
+                ? "Horarios de los cursos"
+                : "Listas de estudiantes"}
+          </h2>
+          <p className="muted">
+            {mode === "overview"
+              ? "Resumen de todos los libros del período, incluyendo el historial de estudiantes retirados."
+              : mode === "schedules"
+                ? "Selecciona un curso para consultar su distribución semanal y los cupos liberados."
+                : "Edita fichas, horarios y retiros desde administración."}
+          </p>
+        </div>
+        <Field label="Período lectivo">
+          <select
+            value={periodId}
+            onChange={(e) => {
+              if (!confirmLeave()) return;
+              setPeriodId(e.target.value);
+              const p = catalog.periods.find((p) => p.id === e.target.value)!;
+              setFrom(p.start_date);
+              setTo(
+                localToday() < p.start_date
+                  ? p.start_date
+                  : localToday() > p.end_date
+                    ? p.end_date
+                    : localToday(),
+              );
+              setDetail("");
+            }}
+          >
+            {catalog.periods.map((p) => (
+              <option value={p.id} key={p.id}>
+                {p.name}
+              </option>
+            ))}
+          </select>
+        </Field>
+      </div>
+      {mode === "overview" ? (
+        <>
+          <div className="overview-toolbar">
+            <div className="report-dates">
+              <Field label="Desde">
+                <input
+                  type="date"
+                  value={from}
+                  min={period?.start_date}
+                  max={to}
+                  onChange={(e) => setFrom(e.target.value)}
+                />
+              </Field>
+              <Field label="Hasta">
+                <input
+                  type="date"
+                  value={to}
+                  min={from}
+                  max={period?.end_date}
+                  onChange={(e) => setTo(e.target.value)}
+                />
+              </Field>
+            </div>
+            <button
+              className="button small"
+              onClick={() => void load()}
+              disabled={loading}
+            >
+              {loading ? "Cargando…" : "Actualizar resumen"}
+            </button>
+          </div>
+          {error && <Alert>{error}</Alert>}
+          {loading && <p role="status">Cargando asistencia de los cursos…</p>}
+          {!loading && !error && (
+            <>
+              <div className="overview-counts">
+                <span>
+                  <strong>{data.length}</strong> libros
+                </span>
+                <span>
+                  <strong>{active}</strong> matrículas activas
+                </span>
+                <span>
+                  <strong>{retired}</strong> retiradas, con historial
+                </span>
+              </div>
+              <div className="stats">
+                {[
+                  [
+                    "Asistencia",
+                    totals.percentage === null
+                      ? "Sin registros"
+                      : `${totals.percentage}%`,
+                  ],
+                  ["Presentes", totals.present],
+                  ["Justificadas", totals.justified],
+                  ["Ausentes", totals.absent],
+                  ["Pendientes", totals.pending],
+                  ["Suspendidas", totals.suspended],
+                ].map(([label, value]) => (
+                  <div key={label}>
+                    <span>{label}</span>
+                    <strong>{value}</strong>
+                  </div>
+                ))}
+              </div>
+              <div className="table-scroll">
+                <table className="plain-table overview-table">
+                  <thead>
+                    <tr>
+                      <th>Curso / profesor</th>
+                      <th>Activos</th>
+                      <th>Retirados</th>
+                      <th>Presentes</th>
+                      <th>Ausentes</th>
+                      <th>Justificadas</th>
+                      <th>Pendientes</th>
+                      <th>Asistencia</th>
+                      <th>Detalle</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.map((d) => {
+                      const summary = summarize(lessonsFor(d, from, to));
+                      return (
+                        <tr key={d.book.id}>
+                          <th>
+                            <strong>{d.book.discipline}</strong>
+                            <small>{d.book.teacher_name}</small>
+                          </th>
+                          <td>
+                            {d.enrollments.filter((e) => !isRetired(e)).length}
+                          </td>
+                          <td>
+                            {d.enrollments.filter((e) => isRetired(e)).length}
+                          </td>
+                          <td>{summary.present}</td>
+                          <td>{summary.absent}</td>
+                          <td>{summary.justified}</td>
+                          <td>{summary.pending}</td>
+                          <td>
+                            {summary.percentage === null
+                              ? "Sin registros"
+                              : `${summary.percentage}%`}
+                          </td>
+                          <td>
+                            <button
+                              className="button small"
+                              aria-pressed={detail === d.book.id}
+                              onClick={() =>
+                                setDetail(detail === d.book.id ? "" : d.book.id)
+                              }
+                            >
+                              {detail === d.book.id
+                                ? "Cerrar"
+                                : "Abrir asistencia"}
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              <p className="hint">
+                Las suspensiones y los pendientes no participan en el
+                porcentaje. Los retiros conservan sus sesiones históricas, sin
+                generar clases posteriores a su fecha de salida.
+              </p>
+            </>
+          )}
+          {detail && (
+            <BookView
+              key={`detail/${detail}`}
+              bookId={detail}
+              initialTab="attendance"
+              embedded
+              access={{ kind: "admin", book_id: null }}
+              onAdmin={() => {}}
+              onBack={() => setDetail("")}
+            />
+          )}
+        </>
+      ) : (
+        <>
+          <div
+            className="course-tabs"
+            role="tablist"
+            aria-label="Cursos del período"
+          >
+            {available.map((b) => (
+              <button
+                role="tab"
+                aria-selected={selectedId === b.id}
+                className={selectedId === b.id ? "selected" : ""}
+                key={b.id}
+                onClick={() => {
+                  if (confirmLeave()) setSelected(b.id);
+                }}
+              >
+                <strong>{b.discipline}</strong>
+                <small>{b.teacher_name}</small>
+              </button>
+            ))}
+          </div>
+          {selectedId ? (
+            <BookView
+              key={`${mode}/${selectedId}`}
+              bookId={selectedId}
+              initialTab={mode === "schedules" ? "schedule" : "students"}
+              embedded
+              access={{ kind: "admin", book_id: null }}
+              onAdmin={() => {}}
+              onBack={() => {}}
+            />
+          ) : (
+            <p className="empty-state">
+              No hay cursos registrados en este período.
+            </p>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+function Admin({
+  catalog,
+  refresh,
+  onClose,
+  onCreateBook,
+}: {
+  catalog: Catalog;
+  onCreateBook: () => void;
+  refresh: () => Promise<void>;
+  onClose: () => void;
+}) {
+  const [tab, setTab] = useState("overview"),
+    [pendingCount, setPendingCount] = useState(0),
+    [suspensions, setSuspensions] = useState<Suspension[]>([]),
+    [error, setError] = useState(""),
+    [notice, setNotice] = useState(""),
+    [scope, setScope] = useState("center"),
+    [passwordKind, setPasswordKind] = useState("book"),
+    [holidayYear, setHolidayYear] = useState(Number(localToday().slice(0, 4)));
+  const load = () =>
+    api(`/admin?year=${holidayYear}`)
+      .then((v) => {
+        setSuspensions(v.suspensions);
+        setPendingCount(v.pending_count || 0);
+      })
+      .catch((e) => setError(e.message));
+  useEffect(() => {
+    void load();
+  }, [holidayYear]);
+  async function save(value: unknown) {
+    setNotice("");
+    await api("/admin", value);
+    await refresh();
+    await load();
+    setNotice("Cambios guardados.");
+  }
+  return (
+    <main className="container admin-page">
+      <button
+        className="back-link"
+        onClick={() => {
+          if (confirmLeave()) onClose();
+        }}
+      >
+        <ArrowLeft size={17} /> Volver a los libros
+      </button>
+      <div className="section-heading">
+        <div>
+          <span className="eyebrow">CENTRO ARTÍSTICO CAC</span>
+          <h1>Administración</h1>
+          <p>Profesores, períodos lectivos y suspensiones.</p>
+        </div>
+        <div className="admin-heading-actions">
+          <button className="button primary" onClick={onCreateBook}>
+            <Plus size={17} /> Crear libro
+          </button>
+          <ShieldCheck size={32} />
+        </div>
+      </div>
+      <div className="book-tabs">
+        {[
+          ["overview", "Vista general"],
+          ["requests", `Pendientes por aprobar (${pendingCount})`],
+          ["schedules", "Horarios"],
+          ["students", "Estudiantes"],
+          ["suspensions", "Suspensiones"],
+          ["teachers", "Profesores"],
+          ["periods", "Períodos"],
+          ["books", "Duración de clases"],
+          ["manage", "Editar y archivar"],
+          ["passwords", "Contraseñas"],
+        ].map(([key, label]) => (
+          <button
+            className={tab === key ? "selected" : ""}
+            key={key}
+            onClick={() => {
+              if (!confirmLeave()) return;
+              setTab(key);
+              setNotice("");
+            }}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+      <section className="admin-card">
+        {notice && (
+          <p className="success" role="status">
+            <Check size={18} />
+            {notice}
+          </p>
+        )}
+        {error && <Alert>{error}</Alert>}
+        {tab === "manage" && <EntityManager catalog={catalog} save={save} />}
+        {tab === "requests" && (
+          <RequestList admin onRefresh={load} onReviewed={refresh} />
+        )}
+        {["overview", "schedules", "students"].includes(tab) && (
+          <AdminWorkspace catalog={catalog} mode={tab} />
+        )}
+        {tab === "teachers" && (
+          <>
+            <h2>Profesores</h2>
+            <p className="muted">
+              El mismo profesor puede asociarse a varios libros.
+            </p>
+            <SubmitForm
+              label="Agregar profesor"
+              onSubmit={(f) => save({ action: "teacher", name: f.get("name") })}
+            >
+              <Field label="Nombre completo">
+                <input name="name" required maxLength={120} />
+              </Field>
+            </SubmitForm>
+            <div className="table-scroll admin-data-table">
+              <table className="plain-table">
+                <thead>
+                  <tr>
+                    <th>Profesor</th>
+                    <th>Disciplinas / libros</th>
+                    <th>Total de libros</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {catalog.teachers.map((t) => {
+                    const books = catalog.books.filter(
+                      (b) => b.teacher_id === t.id,
+                    );
+                    return (
+                      <tr key={t.id}>
+                        <th>{t.name}</th>
+                        <td>
+                          {books.length ? (
+                            books.map((book) => (
+                              <div className="teacher-discipline" key={book.id}>
+                                <strong>{book.discipline}</strong>
+                                <small>{book.period_name}</small>
+                              </div>
+                            ))
+                          ) : (
+                            <span className="muted">Sin libros asignados</span>
+                          )}
+                        </td>
+                        <td>{books.length}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
+        {tab === "periods" && (
+          <>
+            <h2>Períodos lectivos</h2>
+            <SubmitForm
+              label="Crear período"
+              onSubmit={(f) =>
+                save({
+                  action: "period",
+                  name: f.get("name"),
+                  start_date: f.get("start_date"),
+                  end_date: f.get("end_date"),
+                })
+              }
+            >
+              <Field label="Nombre">
+                <input
+                  name="name"
+                  placeholder="Período lectivo 2027"
+                  required
+                  maxLength={120}
+                />
+              </Field>
+              <div className="two-fields">
+                <Field label="Primer día">
+                  <input type="date" name="start_date" required />
+                </Field>
+                <Field label="Último día">
+                  <input type="date" name="end_date" required />
+                </Field>
+              </div>
+            </SubmitForm>
+            <ul className="simple-list">
+              {catalog.periods.map((p) => (
+                <li key={p.id}>
+                  <strong>{p.name}</strong>
+                  <span>
+                    {p.start_date} — {p.end_date}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
+        {tab === "suspensions" && (
+          <>
+            <h2>Suspender clases</h2>
+            <p className="muted">
+              Estas sesiones no se cuentan como ausencias. Puedes indicar
+              vacaciones, feriados o permisos.
+            </p>
+            <SubmitForm
+              label="Registrar suspensión"
+              onSubmit={(f) =>
+                save({
+                  action: "suspension",
+                  scope,
+                  target_id: scope === "center" ? null : f.get("target_id"),
+                  start_date: f.get("start_date"),
+                  end_date: f.get("end_date"),
+                  reason: f.get("reason"),
+                })
+              }
+            >
+              <Field label="¿A quién afecta?">
+                <select
+                  value={scope}
+                  onChange={(e) => setScope(e.target.value)}
+                >
+                  <option value="center">Todo el CAC</option>
+                  <option value="teacher">
+                    Un profesor y todos sus libros
+                  </option>
+                  <option value="book">Un libro</option>
+                </select>
+              </Field>
+              {scope !== "center" && (
+                <Field label={scope === "teacher" ? "Profesor" : "Libro"}>
+                  <select name="target_id" required key={scope}>
+                    <option value="">Seleccionar…</option>
+                    {scope === "teacher"
+                      ? catalog.teachers.map((t) => (
+                          <option key={t.id} value={t.id}>
+                            {t.name}
+                          </option>
+                        ))
+                      : catalog.books.map((b) => (
+                          <option key={b.id} value={b.id}>
+                            {b.discipline} · {b.teacher_name}
+                          </option>
+                        ))}
+                  </select>
+                </Field>
+              )}
+              <div className="two-fields">
+                <Field label="Desde">
+                  <input
+                    type="date"
+                    required
+                    name="start_date"
+                    defaultValue={localToday()}
+                  />
+                </Field>
+                <Field label="Hasta (inclusive)">
+                  <input
+                    type="date"
+                    required
+                    name="end_date"
+                    defaultValue={localToday()}
+                  />
+                </Field>
+              </div>
+              <Field label="Motivo">
+                <input
+                  name="reason"
+                  required
+                  maxLength={120}
+                  placeholder="Por ejemplo, permiso del profesor"
+                />
+              </Field>
+            </SubmitForm>
+            <div className="suspension-table-heading">
+              <div>
+                <h3>Suspensiones registradas</h3>
+                <p className="hint">
+                  Los feriados nacionales se aplican automáticamente cada año.
+                  Las vacaciones y cierres especiales se registran arriba.
+                  Habilitar clases desactiva solo el feriado, no otras
+                  suspensiones.
+                </p>
+              </div>
+              <Field label="Año">
+                <input
+                  type="number"
+                  min={2000}
+                  max={2100}
+                  value={holidayYear}
+                  onChange={(e) => {
+                    const year = Number(e.target.value);
+                    if (year >= 2000 && year <= 2100) setHolidayYear(year);
+                  }}
+                />
+              </Field>
+            </div>
+            <div className="table-scroll admin-data-table">
+              <table className="plain-table suspension-table">
+                <thead>
+                  <tr>
+                    <th>Desde</th>
+                    <th>Hasta</th>
+                    <th>Motivo</th>
+                    <th>Afecta a</th>
+                    <th>Origen / estado</th>
+                    <th>Acción</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {suspensions
+                    .filter(
+                      (s) =>
+                        s.end_date >= `${holidayYear}-01-01` &&
+                        s.start_date <= `${holidayYear}-12-31`,
+                    )
+                    .map((s) => (
+                      <tr key={s.id}>
+                        <td>{shortDate(s.start_date)}</td>
+                        <td>{shortDate(s.end_date)}</td>
+                        <th>{s.reason}</th>
+                        <td>
+                          {s.scope === "center"
+                            ? "Todo el CAC"
+                            : s.scope === "teacher"
+                              ? catalog.teachers.find(
+                                  (t) => t.id === s.target_id,
+                                )?.name
+                              : catalog.books.find((b) => b.id === s.target_id)
+                                  ?.discipline}
+                        </td>
+                        <td>
+                          <span
+                            className={`calendar-badge ${s.source === "holiday" ? "automatic" : ""}`}
+                          >
+                            {s.source === "holiday" ? "Automático" : "Manual"}
+                          </span>
+                          {s.active === false && (
+                            <small className="holiday-enabled">
+                              Clases habilitadas
+                            </small>
+                          )}
+                        </td>
+                        <td>
+                          <button
+                            className="button small"
+                            onClick={async () => {
+                              try {
+                                if (s.source === "holiday") {
+                                  await save({
+                                    action: "holiday-exception",
+                                    date: s.start_date,
+                                    classes_enabled: s.active !== false,
+                                  });
+                                } else {
+                                  if (
+                                    !confirm(
+                                      "¿Quitar esta suspensión? Las marcas anteriores volverán a contar.",
+                                    )
+                                  )
+                                    return;
+                                  await save({
+                                    action: "remove-suspension",
+                                    id: s.id,
+                                  });
+                                }
+                              } catch (e) {
+                                setError((e as Error).message);
+                              }
+                            }}
+                          >
+                            {s.source === "holiday"
+                              ? s.active === false
+                                ? "Restaurar feriado"
+                                : "Habilitar clases"
+                              : "Quitar"}
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
+        {tab === "books" && (
+          <>
+            <h2>Duración de las clases</h2>
+            <SubmitForm
+              onSubmit={(f) =>
+                save({
+                  action: "duration",
+                  book_id: f.get("book_id"),
+                  duration_minutes: Number(f.get("duration_minutes")),
+                })
+              }
+            >
+              <Field label="Libro">
+                <select name="book_id" required>
+                  <option value="">Seleccionar…</option>
+                  {catalog.books.map((b) => (
+                    <option value={b.id} key={b.id}>
+                      {b.discipline} · {b.teacher_name} · {b.duration_minutes}{" "}
+                      min
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="Minutos por sesión">
+                <input
+                  type="number"
+                  name="duration_minutes"
+                  min={5}
+                  max={480}
+                  defaultValue={45}
+                  required
+                />
+              </Field>
+            </SubmitForm>
+          </>
+        )}
+        {tab === "passwords" && (
+          <>
+            <h2>Restablecer contraseña</h2>
+            <p className="muted">
+              La nueva contraseña cierra los accesos anteriores de ese tipo.
+              Administración y creación deben tener contraseñas distintas.
+            </p>
+            <SubmitForm
+              onSubmit={async (f) => {
+                await save({
+                  action: "password",
+                  kind: passwordKind,
+                  book_id:
+                    passwordKind === "book" ? f.get("book_id") : undefined,
+                  password: f.get("password"),
+                });
+                if (passwordKind === "admin") {
+                  window.location.reload();
+                }
+              }}
+            >
+              <Field label="Tipo de acceso">
+                <select
+                  value={passwordKind}
+                  onChange={(e) => setPasswordKind(e.target.value)}
+                >
+                  <option value="book">Un libro</option>
+
+                  <option value="admin">Administración</option>
+                </select>
+              </Field>
+              {passwordKind === "book" && (
+                <Field label="Libro">
+                  <select name="book_id" required>
+                    <option value="">Seleccionar…</option>
+                    {catalog.books.map((b) => (
+                      <option key={b.id} value={b.id}>
+                        {b.discipline} · {b.teacher_name}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+              )}
+              <Field label="Nueva contraseña">
+                <input
+                  type="password"
+                  name="password"
+                  required
+                  minLength={6}
+                  maxLength={128}
+                  autoComplete="new-password"
+                />
+              </Field>
+            </SubmitForm>
+          </>
+        )}
+      </section>
+    </main>
+  );
+}
+export default function App() {
+  const [catalog, setCatalog] = useState<Catalog | null>(null),
+    [access, setAccess] = useState<Access | null>(null),
+    [error, setError] = useState(""),
+    [page, setPage] = useState("home"),
+    [selected, setSelected] = useState<Book | null>(null),
+    [dialog, setDialog] = useState<Access["kind"] | null>(null),
+    [create, setCreate] = useState(false),
+    [filter, setFilter] = useState(""),
+    [showArchive, setShowArchive] = useState(false),
+    [reauth, setReauth] = useState<any>(null);
+  useEffect(() => {
+    const handler = (e: Event) => setReauth((e as CustomEvent).detail);
+    window.addEventListener("cac-auth-required", handler);
+    return () => window.removeEventListener("cac-auth-required", handler);
+  }, []);
+  async function refresh() {
+    const c = await api<Catalog>("/catalog");
+    setCatalog(c);
+  }
+  useEffect(() => {
+    Promise.all([api<Catalog>("/catalog"), api<Access | null>("/session")])
+      .then(([c, a]) => {
+        setCatalog(c);
+        setAccess(a);
+        const bookId = window.location.hash.replace("#book/", "");
+        if (window.location.hash.startsWith("#book/")) {
+          const b = c.books.find((b) => b.id === bookId);
+          if (b) {
+            setSelected(b);
+            if (a?.kind === "admin" || a?.book_id === b.id) setPage("book");
+            else setDialog("book");
+          }
+        }
+      })
+      .catch((e) => setError(e.message));
+  }, []);
+  const currentHash = useRef(window.location.hash);
+  useEffect(() => {
+    currentHash.current = window.location.hash;
+  }, [page, selected]);
+  useEffect(() => {
+    const navigate = () => {
+      if (!confirmLeave()) {
+        window.history.pushState(
+          null,
+          "",
+          currentHash.current || window.location.pathname,
+        );
+        return;
+      }
+      currentHash.current = window.location.hash;
+      const bookId = window.location.hash.startsWith("#book/")
+        ? window.location.hash.slice(6)
+        : null;
+      const book = catalog?.books.find((b) => b.id === bookId);
+      if (book) {
+        setSelected(book);
+        if (access?.kind === "admin" || access?.book_id === book.id)
+          setPage("book");
+        else setDialog("book");
+      } else setPage("home");
+    };
+    window.addEventListener("popstate", navigate);
+    return () => window.removeEventListener("popstate", navigate);
+  }, [catalog, access]);
+  function openBook(b: Book) {
+    if (!confirmLeave()) return;
+    setSelected(b);
+    if (access?.kind === "admin" || access?.book_id === b.id) {
+      setPage("book");
+      window.location.hash = `book/${b.id}`;
+    } else setDialog("book");
+  }
+  function onLogin(a: Access) {
+    setAccess(a);
+    const requested = dialog;
+    setDialog(null);
+    if (requested === "book") {
+      setPage("book");
+      window.location.hash = `book/${selected!.id}`;
+    } else if (requested === "admin") {
+      setPage("admin");
+    } else setCreate(true);
+  }
+  async function logout() {
+    if (!confirmLeave()) return;
+    try {
+      await api("/logout", {});
+      setAccess(null);
+      setPage("home");
+      window.location.hash = "";
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }
+  const visibleBooks =
+    catalog?.books.filter(
+      (b) => Boolean(b.archived_at || b.period_archived_at) === showArchive,
+    ) || [];
+  return (
+    <>
+      {reauth && (
+        <PasswordDialog
+          kind={access?.kind === "admin" ? "admin" : "book"}
+          book={selected || undefined}
+          onClose={() => {
+            reauth.reject(
+              new ApiError(
+                "Sesión vencida. Tu cambio sigue pendiente.",
+                401,
+                "SESSION_EXPIRED",
+              ),
+            );
+            setReauth(null);
+          }}
+          onLogin={(a) => {
+            setAccess(a);
+            reauth.resolve();
+            setReauth(null);
+          }}
+        />
+      )}
+      <header className="topbar">
+        <a
+          href="#"
+          className="brand"
+          onClick={(e) => {
+            e.preventDefault();
+            if (!confirmLeave()) return;
+            setPage("home");
+            window.location.hash = "";
+            void refresh().catch((e) => setError(e.message));
+          }}
+        >
+          <img
+            className="cac-logo monochrome-logo"
+            src="/brand/cac-original.jpg"
+            alt="CAC · Centro Artístico Cultural Concepción"
+          />
+          <span className="brand-caption">Registro de asistencia</span>
+        </a>
+        <div className="top-actions">
+          {catalog?.environment !== "production" && catalog && (
+            <span className="demo-badge">Datos de demostración</span>
+          )}
+          <button
+            className="admin-link"
+            onClick={() => {
+              if (confirmLeave()) {
+                access?.kind === "admin"
+                  ? setPage("admin")
+                  : setDialog("admin");
+              }
+            }}
+          >
+            <Settings size={17} />
+            <span>Administración</span>
+          </button>
+          {access && (
+            <button className="button small" onClick={() => void logout()}>
+              <LogOut size={16} /> Salir
+            </button>
+          )}
+        </div>
+      </header>
+      {error && (
+        <div className="container">
+          <Alert>{error}</Alert>
+          <button className="button" onClick={() => window.location.reload()}>
+            Reintentar conexión
+          </button>
+        </div>
+      )}
+      {!catalog && !error && (
+        <main className="container">
+          <p>Cargando los libros del CAC…</p>
+        </main>
+      )}
+      {catalog && page === "home" && (
+        <main className="container home">
+          <section className="library">
+            <div className="library-heading">
+              <div>
+                <h1>
+                  {showArchive ? "Archivo de libros" : "Libros de clases"}{" "}
+                  <span>{visibleBooks.length}</span>
+                </h1>
+                <p>Elige tu libro para registrar la asistencia.</p>
+              </div>
+            </div>
+            <div className="library-filters">
+              <span className="filter-label">
+                <BookOpen size={17} />{" "}
+                <button
+                  className={!showArchive ? "selected" : ""}
+                  onClick={() => setShowArchive(false)}
+                >
+                  Libros activos
+                </button>
+                <button
+                  className={showArchive ? "selected" : ""}
+                  onClick={() => setShowArchive(true)}
+                >
+                  Archivo
+                </button>
+              </span>
+              <div className="search-field">
+                <Search size={17} />
+                <input
+                  aria-label="Buscar libro o profesor"
+                  placeholder="Buscar disciplina o profesor…"
+                  value={filter}
+                  onChange={(e) => setFilter(e.target.value)}
+                />
+              </div>
+            </div>
+            <div className="books-grid">
+              {visibleBooks
+                .filter((b) =>
+                  `${b.discipline} ${b.teacher_name}`
+                    .toLocaleLowerCase("es")
+                    .includes(filter.toLocaleLowerCase("es")),
+                )
+                .map((b, i) => (
+                  <button
+                    className={`book-card palette-${i % 4}`}
+                    key={b.id}
+                    onClick={() => openBook(b)}
+                  >
+                    <div className="book-spine" />
+                    <div className="book-cover">
+                      <div className="cover-top">
+                        <img
+                          className="cover-logo monochrome-logo"
+                          src="/brand/cac-original.jpg"
+                          alt="CAC"
+                        />
+                        <span>LIBRO DE CLASES</span>
+                        <LockKeyhole size={17} />
+                      </div>
+                      <h3>{b.discipline}</h3>
+                      <p>{b.teacher_name}</p>
+                      <div className="cover-bottom">
+                        <span>{b.period_name}</span>
+                        <span>
+                          {b.sessions_per_week}{" "}
+                          {b.sessions_per_week > 1 ? "sesiones" : "sesión"} /
+                          semana
+                        </span>
+                      </div>
+                      <div className="cover-decoration" />
+                    </div>
+                    <div className="book-pages" />
+                    <div className="book-open">
+                      <span>Abrir libro</span>
+                      <span>↗</span>
+                    </div>
+                  </button>
+                ))}
+            </div>
+            {!visibleBooks.length && (
+              <div className="empty-state">
+                <BookOpen size={34} />
+                <h3>
+                  {showArchive
+                    ? "No hay libros archivados"
+                    : "No hay libros registrados"}
+                </h3>
+                <p>
+                  Administración puede agregar profesores y períodos. Luego,
+                  administración crea los libros de cada profesor.
+                </p>
+              </div>
+            )}
+            {visibleBooks.length > 0 &&
+              !visibleBooks.some((b) =>
+                `${b.discipline} ${b.teacher_name}`
+                  .toLocaleLowerCase("es")
+                  .includes(filter.toLocaleLowerCase("es")),
+              ) && (
+                <p className="empty-state">
+                  No hay libros que coincidan con tu búsqueda.
+                </p>
+              )}
+          </section>
+        </main>
+      )}
+      {catalog && page === "book" && selected && (
+        <BookView
+          key={selected.id}
+          bookId={selected.id}
+          access={access}
+          onBack={() => {
+            setPage("home");
+            window.location.hash = "";
+            void refresh().catch((e) => setError(e.message));
+          }}
+          onAdmin={() => setPage("admin")}
+        />
+      )}{" "}
+      {catalog && page === "admin" && access?.kind === "admin" && (
+        <Admin
+          catalog={catalog}
+          onCreateBook={() => setCreate(true)}
+          refresh={refresh}
+          onClose={() => setPage("home")}
+        />
+      )}
+      <footer className="footer">
+        <span>Centro Artístico Cultural Concepción</span>
+        <span>Registro de asistencia</span>
+      </footer>
+      {dialog && (
+        <PasswordDialog
+          kind={dialog}
+          book={selected || undefined}
+          onClose={() => {
+            setDialog(null);
+          }}
+          onLogin={onLogin}
+        />
+      )}{" "}
+      {create && catalog && (
+        <CreateBook
+          catalog={catalog}
+          onClose={() => setCreate(false)}
+          onDone={async (id) => {
+            setCreate(false);
+            await refresh();
+            const c = await api<Catalog>("/catalog");
+            const b = c.books.find((b) => b.id === id);
+            if (b) {
+              setSelected(b);
+              setPage("book");
+              window.location.hash = `book/${b.id}`;
+            }
+          }}
+        />
+      )}
+    </>
+  );
+}
