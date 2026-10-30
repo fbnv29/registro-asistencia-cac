@@ -217,24 +217,6 @@ export function analyze(
     truncated: rows.length > 100,
   };
 }
-// Humor editorial local: no datos personales ni llamadas adicionales al proveedor.
-const musicalJokes = [
-  "¿Qué hace una pianista cuando organiza sus pendientes? ¡Toma nota!",
-  "¿Por qué el metrónomo llega puntual? Porque lleva el tiempo en serio.",
-  "Mi instrumento favorito para revisar cifras es el bajo: me gusta llegar al fondo del asunto.",
-  "¿Qué le dijo una nota a otra? ¡Nos vemos en el siguiente compás!",
-  "Intenté contar un chiste sobre silencios… pero preferí hacer una pausa.",
-  "¿Cómo saluda un coro? ¡Con mucho gusto y en varias voces!",
-  "Me pidieron un chiste en clave de sol, pero con este horario ya vamos en clave de café.",
-  "¿El instrumento favorito de una persona organizada? El acordeón: todo bien coordinado.",
-];
-function musicalAside(requestId: string) {
-  const index = [...requestId].reduce(
-    (sum, char) => sum + char.charCodeAt(0),
-    0,
-  );
-  return musicalJokes[index % musicalJokes.length];
-}
 const cache = new Map<
   string,
   { expires: number; value: ReturnType<typeof analyze> }
@@ -395,7 +377,10 @@ export async function askMaca(raw: unknown, sessionHash: string) {
           )
         ).rows[0];
         return {
-          text: `Hay ${row.pending} cambios de horario esperando aprobación en este momento.`,
+          text:
+            Number(row.pending) === 0
+              ? "La bandeja está en silencio: no hay cambios de horario esperando aprobación en este momento."
+              : `Hay ${row.pending} cambios de horario esperando aprobación en este momento; todavía esperan la batuta de administración.`,
           rows: [],
           comparison: null,
         };
@@ -434,14 +419,21 @@ export async function askMaca(raw: unknown, sessionHash: string) {
         cache.set(key, { expires: Date.now() + 30000, value });
       }
       const s = value.summary;
+      const figures = `${s.count} sesiones individuales con asistencia registrada: ${s.present} presentes, ${s.absent} ausentes y ${s.justified} justificadas. Asistencia: ${s.percentage === null ? "sin registros" : s.percentage + " %"}.`;
       const text =
         intent.metric === "teachers"
-          ? `${value.teachers} profesores tienen registros de asistencia en el período (no acredita quién ingresó la marca).`
+          ? `En la partitura del período aparecen ${value.teachers} profesores con registros de asistencia. Esto cuenta profesores con marcas, no quién las ingresó.`
           : intent.metric === "suspended"
-            ? `${s.suspended} sesiones individuales suspendidas.`
+            ? `En la partitura del período figuran ${s.suspended} sesiones individuales suspendidas. Las dejo fuera del porcentaje de asistencia: una pausa institucional no es una ausencia.`
             : intent.metric === "conflicts"
-              ? `${value.conflicts} pares de sesiones con horarios superpuestos del mismo profesor.`
-              : `${s.count} sesiones individuales con asistencia registrada: ${s.present} presentes, ${s.absent} ausentes y ${s.justified} justificadas. Asistencia: ${s.percentage === null ? "sin registros" : s.percentage + " %"}.`;
+              ? value.conflicts
+                ? `Aquí se cruzaron los compases: detecté ${value.conflicts} pares de sesiones con horarios superpuestos del mismo profesor. Te dejo el detalle para revisarlos.`
+                : "Revisé los compases: no encontré pares de sesiones con horarios superpuestos del mismo profesor en este período."
+              : intent.metric === "pending"
+                ? `Revisé la partitura del período: hay ${s.pending} sesiones individuales pendientes de registro. Todavía les falta su nota en el libro; pendiente no significa ausencia.`
+                : intent.metric === "trend"
+                  ? `Así va el ritmo de la asistencia: ${figures} En la tabla puedes seguirlo mes a mes.`
+                  : `Te paso la partitura del período: ${figures}`;
       return {
         text,
         rows: value.rows,
@@ -458,7 +450,6 @@ export async function askMaca(raw: unknown, sessionHash: string) {
     outcome = "ok";
     return {
       ...result,
-      musical_aside: musicalAside(input.request_id),
       from,
       to,
       metric: intent.metric,

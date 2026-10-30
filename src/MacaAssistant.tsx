@@ -11,7 +11,6 @@ import { api } from "./api";
 import type { Book, Teacher } from "./domain";
 type Result = {
   text: string;
-  musical_aside?: string;
   from: string;
   to: string;
   source: string;
@@ -227,9 +226,9 @@ export function MacaAssistant({
           aria-relevant="additions text"
         >
           <div className="maca-bubble maca-welcome">
-            <p>¡Hola! Soy Maca 🎵 ¿Afinamos los números del CAC?</p>
-            <p className="maca-joke">
-              Yo con los pendientes hago como las pianistas: ¡tomo nota!
+            <p>
+              ¡Hola! Soy Maca 🎵 Tú pones las preguntas; yo llevo el compás de
+              los números del CAC.
             </p>
           </div>
           {messages.length === 0 && !busy && (
@@ -297,9 +296,6 @@ export function MacaAssistant({
                     registradas,{" "}
                     {m.result.comparison.percentage ?? "sin registros"} %.
                   </p>
-                )}
-                {m.result.musical_aside && (
-                  <p className="maca-joke">🎵 {m.result.musical_aside}</p>
                 )}
                 <details className="maca-result-details">
                   <summary>Período y detalle</summary>

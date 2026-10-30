@@ -14,7 +14,7 @@ El porcentaje conserva la regla institucional `(presentes + justificadas) / (pre
 
 ## Personalidad
 
-Maca usa un tono cercano y divertido, con un chiste musical breve por respuesta exitosa. El humor se elige de un repertorio local y se presenta aparte de las cifras; no utiliza información de estudiantes o profesores ni requiere llamadas adicionales al proveedor. Los errores y límites se comunican de forma directa.
+Maca usa una voz cercana y musical dentro de la propia respuesta: los cambios pendientes «esperan la batuta de administración» y los horarios superpuestos «cruzaron los compases». No agrega chistes al pie ni selecciona remates aleatorios. La redacción depende del tipo de consulta y sus resultados, mantiene las cifras calculadas en el servidor y no requiere llamadas adicionales al proveedor. Los errores y límites se comunican de forma directa.
 
 ## Desarrollo local
 
