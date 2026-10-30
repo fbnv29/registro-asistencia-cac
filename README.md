@@ -193,4 +193,4 @@ Antes de publicar: aplicar migraciones a la base de destino, configurar variable
 
 ## 🤖 Maca Asistente
 
-El panel administrativo incorpora análisis institucional de solo lectura, con interpretación opcional mediante Gemini y protección de datos personales. Configuración, uso, seguridad, migraciones y pruebas: [guía de Maca](docs/MACA.md).
+El panel administrativo incorpora análisis institucional de solo lectura, con interpretación opcional mediante Groq o Gemini y respaldo interno y protección de datos personales. Configuración, uso, seguridad, migraciones y pruebas: [guía de Maca](docs/MACA.md).

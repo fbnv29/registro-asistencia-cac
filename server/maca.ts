@@ -1,3 +1,10 @@
+import {
+  classify,
+  ProviderError,
+  type MacaIntent,
+  type Provider,
+} from "./maca-provider";
+export type { MacaIntent } from "./maca-provider";
 import { z } from "zod";
 import { transaction } from "./db";
 import { HttpError, loadAdminBooks } from "./service";
@@ -20,23 +27,7 @@ export const macaInput = z
     teacher_id: z.uuid().optional(),
   })
   .strict();
-const intentSchema = z
-  .object({
-    metric: z.enum([
-      "attendance",
-      "teachers",
-      "pending",
-      "suspended",
-      "requests",
-      "conflicts",
-      "trend",
-    ]),
-    period: z.enum(["today", "week", "month", "semester"]),
-    compare: z.boolean(),
-  })
-  .strict();
-export type MacaIntent = z.infer<typeof intentSchema>;
-// A strict vocabulary boundary: arbitrary user text, identifiers and numbers NEVER reach Google.
+// A strict vocabulary boundary: arbitrary user text, identifiers and numbers NEVER reach an external provider.
 const vocabulary = new Set(
   "asistencia asistencias clases clase profesores profesor registraron registrados registros pendientes pendiente libros libro porcentaje mes mensual semana semanal hoy ayer semestre semestral suspendidas suspendidos suspension suspensiones sesiones sesion cambios horario horarios esperando aprobacion solicitudes superpuestos superpuestas superposiciones conflictos evolucion evoluciono tendencia comparar comparacion anterior attendance teachers pending suspended requests conflicts trend today week month semester".split(
     " ",
@@ -94,7 +85,7 @@ export function dateRange(intent: MacaIntent, today = localToday()) {
     to: today,
   };
 }
-/** Date parsing stays local; calendar dates never need to be sent to Gemini. */
+/** Date parsing stays local; calendar dates never need to be sent to a provider. */
 export function questionRange(
   question: string,
   intent: MacaIntent,
@@ -226,7 +217,7 @@ export function analyze(
     truncated: rows.length > 100,
   };
 }
-// Humor editorial local: no datos personales ni llamadas adicionales a Gemini.
+// Humor editorial local: no datos personales ni llamadas adicionales al proveedor.
 const musicalJokes = [
   "¿Qué hace una pianista cuando organiza sus pendientes? ¡Toma nota!",
   "¿Por qué el metrónomo llega puntual? Porque lleva el tiempo en serio.",
@@ -299,111 +290,84 @@ export async function askMaca(raw: unknown, sessionHash: string) {
       );
     let intent = defaultIntent(safe),
       source = "Interpretación interna";
-    if (process.env.GEMINI_API_KEY) {
-      if ((process.env.MACA_PROVIDER || "gemini") !== "gemini")
-        throw new HttpError(503, "Proveedor de Maca no configurado.");
+    const provider = process.env.MACA_PROVIDER || "gemini";
+    if (!["gemini", "groq", "internal"].includes(provider))
+      throw new HttpError(503, "Proveedor de Maca no configurado.");
+    const key =
+      provider === "groq"
+        ? process.env.GROQ_API_KEY
+        : provider === "gemini"
+          ? process.env.GEMINI_API_KEY
+          : undefined;
+    let fallback: string | null = null;
+    if (key) {
+      // Static statements: provider/model output never becomes SQL.
       await transaction((c) =>
         c.query(
-          "UPDATE maca_requests SET gemini_calls=gemini_calls+1 WHERE session_hash=$1 AND request_id=$2",
+          provider === "groq"
+            ? "UPDATE maca_requests SET groq_calls=groq_calls+1,provider='groq' WHERE session_hash=$1 AND request_id=$2"
+            : "UPDATE maca_requests SET gemini_calls=gemini_calls+1,provider='gemini' WHERE session_hash=$1 AND request_id=$2",
           [sessionHash, input.request_id],
         ),
       );
-      let response: Response;
+      let classified: Awaited<ReturnType<typeof classify>> | undefined;
       try {
-        response = await fetch(
-          `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(process.env.GEMINI_MODEL || "gemini-3.5-flash-lite")}:generateContent`,
-          {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "x-goog-api-key": process.env.GEMINI_API_KEY,
-            },
-            signal: AbortSignal.timeout(10000),
-            body: JSON.stringify({
-              systemInstruction: {
-                parts: [
-                  {
-                    text: "Clasifica vocabulario institucional. Devuelve solo JSON: metric (attendance,teachers,pending,suspended,requests,conflicts,trend), period (today,week,month,semester), compare boolean. No herramientas ni SQL.",
-                  },
-                ],
-              },
-              contents: [{ role: "user", parts: [{ text: safe }] }],
-              generationConfig: {
-                temperature: 0,
-                maxOutputTokens: 200,
-                responseMimeType: "application/json",
-                responseSchema: {
-                  type: "OBJECT",
-                  properties: {
-                    metric: {
-                      type: "STRING",
-                      enum: [
-                        "attendance",
-                        "teachers",
-                        "pending",
-                        "suspended",
-                        "requests",
-                        "conflicts",
-                        "trend",
-                      ],
-                    },
-                    period: {
-                      type: "STRING",
-                      enum: ["today", "week", "month", "semester"],
-                    },
-                    compare: { type: "BOOLEAN" },
-                  },
-                  required: ["metric", "period", "compare"],
-                },
-              },
-            }),
-          },
-        );
-      } catch {
-        throw new HttpError(
-          503,
-          "Gemini no responde. Intenta nuevamente más tarde.",
-          "MACA_PROVIDER_UNAVAILABLE",
-        );
+        classified = await classify(provider as Provider, safe);
+      } catch (error) {
+        if (!(error instanceof ProviderError)) throw error;
+        fallback = error.reason;
       }
-      if (response.status === 402)
-        throw new HttpError(
-          503,
-          "El proyecto de Gemini exige créditos y no permite esta consulta. Usa una clave de un proyecto con acceso gratuito. Maca no activa facturación.",
-          "MACA_PROVIDER_PAYMENT_REQUIRED",
+      if (classified) {
+        await transaction((c) =>
+          c.query(
+            "UPDATE maca_requests SET input_tokens=$3,output_tokens=$4 WHERE session_hash=$1 AND request_id=$2",
+            [
+              sessionHash,
+              input.request_id,
+              classified.usage.input,
+              classified.usage.output,
+            ],
+          ),
         );
-      if (!response.ok)
-        throw new HttpError(
-          response.status === 429 ? 429 : 503,
-          response.status === 429
-            ? "Cuota de Gemini agotada. Las otras funciones siguen disponibles."
-            : "Gemini no está disponible.",
-          "MACA_PROVIDER_UNAVAILABLE",
-        );
-      const data = await response.json();
+        if (classified.intent) {
+          intent = classified.intent;
+          // Unambiguous institutional concepts take precedence over model synonyms.
+          if (/aprobacion|solicitudes|cambios/.test(safe))
+            intent.metric = "requests";
+          else if (/superpuest|conflict|superpos/.test(safe))
+            intent.metric = "conflicts";
+          else if (/evolu|tendencia/.test(safe)) intent.metric = "trend";
+          source = `${provider === "groq" ? "Groq" : "Gemini"} · clasificación sin datos personales`;
+        } else fallback = "invalid_response";
+      }
+    } else if (provider !== "internal") fallback = "missing_key";
+    if (fallback) {
+      const reasons: Record<string, string> = {
+        quota: "cuota del proveedor agotada",
+        payment: "proveedor bloqueado por créditos",
+        credentials: "clave o permisos del proveedor",
+        unavailable: "proveedor no disponible",
+        invalid_response: "respuesta del proveedor no válida",
+        missing_key: "sin clave del proveedor",
+      };
+      source = `Interpretación interna · respaldo (${reasons[fallback]})`;
       await transaction((c) =>
         c.query(
-          "UPDATE maca_requests SET input_tokens=$3,output_tokens=$4 WHERE session_hash=$1 AND request_id=$2",
-          [
-            sessionHash,
-            input.request_id,
-            data.usageMetadata?.promptTokenCount || 0,
-            data.usageMetadata?.candidatesTokenCount || 0,
-          ],
+          "UPDATE maca_requests SET fallback_reason=$3 WHERE session_hash=$1 AND request_id=$2",
+          [sessionHash, input.request_id, fallback],
         ),
       );
-      try {
-        intent = intentSchema.parse(
-          JSON.parse(data.candidates?.[0]?.content?.parts?.[0]?.text),
-        );
-        source = "Gemini · clasificación sin datos personales";
-      } catch {
-        throw new HttpError(
-          503,
-          "Gemini devolvió una interpretación inválida. Reformula la consulta.",
-        );
-      }
     }
+    if (
+      source.startsWith("Interpretación interna") &&
+      !/asistencia|clase|sesion|registro|profesor|pendiente|suspend|suspension|solicitud|aprobacion|cambio|superpuest|conflict|superpos|evolu|tendencia/.test(
+        safe,
+      )
+    )
+      throw new HttpError(
+        400,
+        "El modo interno necesita una pregunta explícita sobre asistencia, pendientes, suspensiones, aprobaciones o superposiciones.",
+      );
     const range = questionRange(input.question, intent),
       from = input.from || range.from,
       to = input.to || range.to;
@@ -499,6 +463,7 @@ export async function askMaca(raw: unknown, sessionHash: string) {
       to,
       metric: intent.metric,
       source,
+      fallback,
       usage,
       generated_at: new Date().toISOString(),
       filters: {

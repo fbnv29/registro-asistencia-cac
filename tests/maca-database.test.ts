@@ -106,6 +106,8 @@ it.skipIf(!enabled)(
       teacher = randomUUID();
     const ids = [digest(admin), digest(teacher)];
     const key = process.env.GEMINI_API_KEY;
+    const provider = process.env.MACA_PROVIDER;
+    process.env.MACA_PROVIDER = "internal";
     process.env.GEMINI_API_KEY = "";
     try {
       await transaction(async (c) => {
@@ -156,6 +158,8 @@ it.skipIf(!enabled)(
       expect(metadata).toEqual([{ gemini_calls: 0, outcome: "ok" }]);
       expect((await call(admin)).status).toBe(409);
     } finally {
+      if (provider === undefined) delete process.env.MACA_PROVIDER;
+      else process.env.MACA_PROVIDER = provider;
       if (key === undefined) delete process.env.GEMINI_API_KEY;
       else process.env.GEMINI_API_KEY = key;
       await transaction(async (c) => {

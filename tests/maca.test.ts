@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, afterEach } from "vitest";
+import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import { performance } from "node:perf_hooks";
 import type { BookData } from "../src/domain";
 const state = vi.hoisted(() => ({
@@ -35,6 +35,11 @@ import {
   macaInput,
 } from "../server/maca";
 import { handleApi } from "../server/api";
+beforeEach(() => {
+  vi.stubEnv("MACA_PROVIDER", "gemini");
+  vi.stubEnv("GEMINI_API_KEY", "");
+  vi.stubEnv("GROQ_API_KEY", "");
+});
 afterEach(() => {
   state.access = null;
   state.queries = [];
@@ -134,8 +139,9 @@ it("maneja cuota agotada y respuestas maliciosas del modelo", async () => {
     "fetch",
     vi.fn(async () => new Response("{}", { status: 429 })),
   );
-  await expect(askMaca(payload(), "session")).rejects.toMatchObject({
-    status: 429,
+  expect(await askMaca(payload(), "session")).toMatchObject({
+    fallback: "quota",
+    text: expect.stringContaining("3 cambios"),
   });
   vi.stubGlobal(
     "fetch",
@@ -150,12 +156,144 @@ it("maneja cuota agotada y respuestas maliciosas del modelo", async () => {
         ),
     ),
   );
-  await expect(askMaca(payload(), "session")).rejects.toMatchObject({
-    status: 503,
+  expect(await askMaca(payload(), "session")).toMatchObject({
+    fallback: "invalid_response",
+    source: expect.stringContaining("respaldo"),
   });
   expect(state.queries.some((q) => q.includes("DELETE FROM books"))).toBe(
     false,
   );
+});
+it("selecciona Groq sin invocar Gemini y mantiene la frontera de privacidad", async () => {
+  vi.stubEnv("MACA_PROVIDER", "groq");
+  vi.stubEnv("GROQ_API_KEY", "groq-test");
+  vi.stubEnv("GEMINI_API_KEY", "gemini-test");
+  const fetch = vi.fn(
+    async () =>
+      new Response(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                content: JSON.stringify({
+                  metric: "requests",
+                  period: "today",
+                  compare: false,
+                }),
+              },
+            },
+          ],
+          usage: { prompt_tokens: 40, completion_tokens: 30 },
+        }),
+      ),
+  );
+  vi.stubGlobal("fetch", fetch);
+  const result = await askMaca(
+    { ...payload(), question: "Solicitudes de María Pérez RUT 12345678 hoy" },
+    "session",
+  );
+  expect(result).toMatchObject({
+    fallback: null,
+    source: expect.stringContaining("Groq"),
+    text: expect.stringContaining("3 cambios"),
+  });
+  expect(fetch).toHaveBeenCalledTimes(1);
+  const [url, request] = fetch.mock.calls[0] as any;
+  const body = JSON.parse(request.body);
+  expect(url).toBe("https://api.groq.com/openai/v1/chat/completions");
+  expect(request.headers.Authorization).toBe("Bearer groq-test");
+  expect(body.messages[1].content).toBe("solicitudes hoy");
+  expect(body.response_format.json_schema.strict).toBe(true);
+  expect(body.max_completion_tokens).toBe(512);
+  expect(state.queries.some((q) => q.includes("groq_calls=groq_calls+1"))).toBe(
+    true,
+  );
+  expect(
+    state.queries.some((q) => q.includes("gemini_calls=gemini_calls+1")),
+  ).toBe(false);
+});
+it("las aprobaciones no se confunden con registros pendientes aunque el modelo las mezcle", async () => {
+  vi.stubEnv("MACA_PROVIDER", "groq");
+  vi.stubEnv("GROQ_API_KEY", "test");
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            choices: [
+              {
+                message: {
+                  content:
+                    '{"metric":"pending","period":"today","compare":false}',
+                },
+              },
+            ],
+            usage: { prompt_tokens: 10, completion_tokens: 10 },
+          }),
+        ),
+    ),
+  );
+  expect(await askMaca(payload(), "session")).toMatchObject({
+    metric: "requests",
+    text: expect.stringContaining("3 cambios"),
+    fallback: null,
+  });
+});
+it.each([402, 429, 401, 500])(
+  "usa respaldo sin reintentos ni cambios ante HTTP %s de Groq",
+  async (status) => {
+    vi.stubEnv("MACA_PROVIDER", "groq");
+    vi.stubEnv("GROQ_API_KEY", "test");
+    const fetch = vi.fn(async () => new Response("{}", { status }));
+    vi.stubGlobal("fetch", fetch);
+    const result = await askMaca(payload(), "session");
+    expect(result.text).toContain("3 cambios");
+    expect(result.source).toContain("respaldo");
+    expect(result.fallback).toBeTruthy();
+    expect(fetch).toHaveBeenCalledTimes(1);
+  },
+);
+it("respalda fallas de red y JSON malicioso de Groq sin ejecutar SQL externo", async () => {
+  vi.stubEnv("MACA_PROVIDER", "groq");
+  vi.stubEnv("GROQ_API_KEY", "test");
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => {
+      throw new Error("network");
+    }),
+  );
+  expect((await askMaca(payload(), "session")).fallback).toBe("unavailable");
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            choices: [{ message: { content: '{"sql":"DELETE FROM books"}' } }],
+            usage: { prompt_tokens: 10, completion_tokens: 20 },
+          }),
+        ),
+    ),
+  );
+  expect((await askMaca(payload(), "session")).fallback).toBe(
+    "invalid_response",
+  );
+  expect(state.queries.some((q) => q.includes("DELETE FROM books"))).toBe(
+    false,
+  );
+  expect(state.queries.some((q) => q.includes("input_tokens=$3"))).toBe(true);
+});
+it("modo interno explícito no llama a ningún proveedor aunque existan claves", async () => {
+  vi.stubEnv("MACA_PROVIDER", "internal");
+  vi.stubEnv("GROQ_API_KEY", "test");
+  vi.stubEnv("GEMINI_API_KEY", "test");
+  const fetch = vi.fn();
+  vi.stubGlobal("fetch", fetch);
+  expect((await askMaca(payload(), "session")).source).toBe(
+    "Interpretación interna",
+  );
+  expect(fetch).not.toHaveBeenCalled();
 });
 it("resuelve períodos administrativos y comparación", () => {
   expect(dateRange(defaultIntent("semana"), "2026-10-30")).toEqual({
