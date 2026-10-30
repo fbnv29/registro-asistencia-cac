@@ -87,6 +87,10 @@ describeIntegration(
     }, 60000);
     afterAll(async () => {
       await transaction(async (c) => {
+        await c.query(
+          "DELETE FROM change_requests WHERE book_id=ANY($1::uuid[])",
+          [bookIds],
+        );
         const enrollments = (
           await c.query(
             "SELECT id,student_id FROM enrollments WHERE book_id=ANY($1::uuid[])",
@@ -254,19 +258,27 @@ describeIntegration(
       );
     });
     it("matricula a mitad de año, cambia el horario desde una fecha y conserva el pasado", async () => {
-      let r = await call(`/books/${bookIds[0]}/students`, {
-        full_name: "Ingreso tardío de prueba",
-        joined_on: "2026-07-01",
-        slots: [{ day: 4, time: "16:00" }],
-      });
+      let r = await call(
+        `/books/${bookIds[0]}/students`,
+        {
+          full_name: "Ingreso tardío de prueba",
+          joined_on: "2026-07-01",
+          slots: [{ day: 4, time: "16:00" }],
+        },
+        adminCookie,
+      );
       expect(r.status).toBe(201);
       const e = (await r.json()).id;
       createdEnrollments.push(e);
-      r = await call(`/books/${bookIds[0]}/schedule`, {
-        enrollment_id: e,
-        effective_from: "2026-07-15",
-        slots: [{ day: 2, time: "17:00" }],
-      });
+      r = await call(
+        `/books/${bookIds[0]}/schedule`,
+        {
+          enrollment_id: e,
+          effective_from: "2026-07-15",
+          slots: [{ day: 2, time: "17:00" }],
+        },
+        adminCookie,
+      );
       expect(r.status).toBe(200);
       let data: BookData = await (await call(`/books/${bookIds[0]}`)).json();
       let lessons = lessonsFor(data).filter((l) => l.enrollment_id === e);
@@ -281,7 +293,7 @@ describeIntegration(
       };
       expect(
         (await call(`/books/${bookIds[0]}/students`, withdrawal)).status,
-      ).toBe(403);
+      ).toBe(202);
       expect(
         (await call(`/books/${bookIds[0]}/students`, withdrawal, adminCookie))
           .status,
@@ -347,6 +359,229 @@ describeIntegration(
         "Falta justificada",
       );
     });
+    it("mantiene el alta pendiente hasta aprobarla y evita duplicar solicitudes o aplicar dos veces", async () => {
+      const input = {
+        full_name: "Propuesta de prueba",
+        joined_on: "2026-10-01",
+        slots: [{ day: 1, time: "14:00" }],
+      };
+      const response = await call(`/books/${bookIds[0]}/students`, input);
+      expect(response.status).toBe(202);
+      const request = await response.json();
+      expect(
+        (await (await call(`/books/${bookIds[0]}`)).json()).enrollments.some(
+          (e: any) => e.full_name === input.full_name,
+        ),
+      ).toBe(false);
+      const duplicate = await (
+        await call(`/books/${bookIds[0]}/students`, input)
+      ).json();
+      expect(duplicate.id).toBe(request.id);
+      expect(
+        (
+          await call(`/admin/requests/${request.id}`, {
+            decision: "approve",
+            note: "",
+          })
+        ).status,
+      ).toBe(403);
+      expect((await call("/admin/requests")).status).toBe(403);
+      const queue = await (await call(`/books/${bookIds[0]}/requests`)).json();
+      expect(queue.requests.find((r: any) => r.id === request.id).status).toBe(
+        "pending",
+      );
+      expect(
+        (
+          await call(
+            `/admin/requests/${request.id}`,
+            { decision: "approve", note: "Alta confirmada" },
+            adminCookie,
+          )
+        ).status,
+      ).toBe(200);
+      const data: BookData = await (await call(`/books/${bookIds[0]}`)).json();
+      expect(
+        data.enrollments.filter((e) => e.full_name === input.full_name),
+      ).toHaveLength(1);
+      expect(
+        (
+          await call(
+            `/admin/requests/${request.id}`,
+            { decision: "approve", note: "" },
+            adminCookie,
+          )
+        ).status,
+      ).toBe(409);
+      const history = await (
+        await call(`/books/${bookIds[0]}/requests`)
+      ).json();
+      expect(
+        history.requests.find((r: any) => r.id === request.id),
+      ).toMatchObject({ status: "approved", review_note: "Alta confirmada" });
+    });
+    it("conserva el horario vigente hasta la aprobación y después muestra el nuevo", async () => {
+      const input = {
+        enrollment_id: enrollmentId,
+        effective_from: "2026-11-01",
+        slots: [{ day: 2, time: "17:30" }],
+      };
+      const response = await call(`/books/${bookIds[0]}/schedule`, input);
+      expect(response.status).toBe(202);
+      const request = await response.json();
+      let data: BookData = await (await call(`/books/${bookIds[0]}`)).json();
+      expect(
+        data.schedules.some(
+          (s) =>
+            s.effective_from === input.effective_from &&
+            s.enrollment_id === enrollmentId,
+        ),
+      ).toBe(false);
+      expect(
+        (
+          await call(
+            `/admin/requests/${request.id}`,
+            { decision: "approve", note: "" },
+            adminCookie,
+          )
+        ).status,
+      ).toBe(200);
+      data = await (await call(`/books/${bookIds[0]}`)).json();
+      expect(
+        data.schedules.find(
+          (s) =>
+            s.effective_from === input.effective_from &&
+            s.enrollment_id === enrollmentId,
+        )?.slots,
+      ).toEqual(input.slots);
+      expect(
+        data.attendance.find(
+          (a) => a.enrollment_id === enrollmentId && a.date === "2026-03-02",
+        )?.status,
+      ).toBe("justified");
+    });
+    it("rechaza una propuesta sin modificar la ficha y muestra la observación al profesor", async () => {
+      const response = await call(`/books/${bookIds[0]}/students`, {
+        enrollment_id: enrollmentId,
+        full_name: "Nombre rechazado",
+        joined_on: "2026-03-01",
+      });
+      expect(response.status).toBe(202);
+      const request = await response.json();
+      expect(
+        (
+          await call(
+            `/admin/requests/${request.id}`,
+            { decision: "reject", note: "Revisa los apellidos" },
+            adminCookie,
+          )
+        ).status,
+      ).toBe(200);
+      const data: BookData = await (await call(`/books/${bookIds[0]}`)).json();
+      expect(
+        data.enrollments.find((e) => e.id === enrollmentId)?.full_name,
+      ).toBe("Estudiante de prueba");
+      const queue = await (await call(`/books/${bookIds[0]}/requests`)).json();
+      expect(
+        queue.requests.find((r: any) => r.id === request.id),
+      ).toMatchObject({
+        status: "rejected",
+        review_note: "Revisa los apellidos",
+      });
+    });
+    it("detecta cambios administrativos posteriores y no sobrescribe una ficha con una solicitud obsoleta", async () => {
+      const response = await call(`/books/${bookIds[0]}/students`, {
+        enrollment_id: enrollmentId,
+        full_name: "Propuesta obsoleta",
+        joined_on: "2026-03-01",
+      });
+      const request = await response.json();
+      expect(response.status).toBe(202);
+      expect(
+        (
+          await call(
+            `/books/${bookIds[0]}/students`,
+            {
+              enrollment_id: enrollmentId,
+              full_name: "Nombre actualizado por administración",
+              joined_on: "2026-03-01",
+            },
+            adminCookie,
+          )
+        ).status,
+      ).toBe(200);
+      expect(
+        (
+          await call(
+            `/admin/requests/${request.id}`,
+            { decision: "approve", note: "" },
+            adminCookie,
+          )
+        ).status,
+      ).toBe(409);
+      const data: BookData = await (await call(`/books/${bookIds[0]}`)).json();
+      expect(
+        data.enrollments.find((e) => e.id === enrollmentId)?.full_name,
+      ).toBe("Nombre actualizado por administración");
+      const queue = await (await call(`/books/${bookIds[0]}/requests`)).json();
+      expect(queue.requests.find((r: any) => r.id === request.id).status).toBe(
+        "pending",
+      );
+    });
+    it("solo administración crea libros y puede aprobar la propuesta de un profesor sin exponer contraseñas", async () => {
+      const input = {
+        teacher_id: teacherId,
+        period_id: periodId,
+        discipline: "Libro solicitado de prueba",
+        sessions_per_week: 2,
+        password: "new-book-secret",
+      };
+      expect((await call("/books", input)).status).toBe(403);
+      expect(
+        (
+          await call(
+            "/login",
+            { kind: "creator", password: process.env.CAC_CREATOR_PASSWORD },
+            "",
+          )
+        ).status,
+      ).toBe(403);
+      const proposed = await call(`/books/${bookIds[0]}/requests`, {
+        kind: "book.create",
+        data: input,
+      });
+      expect(proposed.status).toBe(202);
+      const request = await proposed.json();
+      const queue = await (
+        await call("/admin/requests", undefined, adminCookie)
+      ).json();
+      expect(JSON.stringify(queue)).not.toContain("new-book-secret");
+      expect(JSON.stringify(queue)).not.toContain("scrypt:");
+      const before = await (await call("/catalog")).json();
+      expect(
+        before.books.some((b: any) => b.discipline === input.discipline),
+      ).toBe(false);
+      const approved = await call(
+        `/admin/requests/${request.id}`,
+        { decision: "approve", note: "" },
+        adminCookie,
+      );
+      expect(approved.status).toBe(200);
+      const result = await approved.json();
+      bookIds.push(result.result.id);
+      expect(
+        (
+          await call(
+            "/login",
+            {
+              kind: "book",
+              book_id: result.result.id,
+              password: input.password,
+            },
+            "",
+          )
+        ).status,
+      ).toBe(200);
+    });
     it("limita intentos y restablece contraseñas de libro revocando sesiones", async () => {
       for (let i = 0; i < 15; i++)
         await call(
@@ -386,7 +621,7 @@ describeIntegration(
       expect(r.status).toBe(200);
       bookCookie = r.headers.get("set-cookie")!.split(";")[0];
     });
-    it("rechaza contraseñas administrativas y de creación idénticas", async () => {
+    it("rechaza la gestión de la antigua credencial de creación", async () => {
       expect(
         (
           await call(

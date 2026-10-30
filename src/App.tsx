@@ -28,6 +28,7 @@ import {
   CircleHelp,
 } from "lucide-react";
 import { api } from "./api";
+import RequestList from "./RequestList";
 import {
   addDays,
   days,
@@ -271,14 +272,23 @@ function CreateBook({
   catalog,
   onClose,
   onDone,
+  requestFor,
 }: {
   catalog: Catalog;
+  requestFor?: { bookId: string; teacherId: string };
   onClose: () => void;
   onDone: (id: string) => void;
 }) {
   return (
-    <Modal title="Un nuevo libro de clases" onClose={onClose}>
-      <p className="muted">Completa los datos para crear el libro de clases.</p>
+    <Modal
+      title={requestFor ? "Proponer nuevo libro" : "Un nuevo libro de clases"}
+      onClose={onClose}
+    >
+      <p className="muted">
+        {requestFor
+          ? "Administración revisará esta propuesta antes de crear el libro."
+          : "Completa los datos para crear el libro de clases."}
+      </p>
       {!catalog.teachers.length || !catalog.periods.length ? (
         <Alert>
           Administración debe agregar profesores y un período lectivo antes de
@@ -286,25 +296,31 @@ function CreateBook({
         </Alert>
       ) : (
         <SubmitForm
-          label="Crear libro"
+          label={requestFor ? "Enviar solicitud" : "Crear libro"}
           onSubmit={async (f) => {
-            const result = await api("/books", {
+            const input = {
               teacher_id: f.get("teacher_id"),
               period_id: f.get("period_id"),
               discipline: f.get("discipline"),
               sessions_per_week: Number(f.get("sessions")),
               password: f.get("password"),
-            });
+            };
+            const result = await api(
+              requestFor ? `/books/${requestFor.bookId}/requests` : "/books",
+              requestFor ? { kind: "book.create", data: input } : input,
+            );
             onDone(result.id);
           }}
         >
           <Field label="Tu nombre">
             <select required name="teacher_id">
-              {catalog.teachers.map((t) => (
-                <option value={t.id} key={t.id}>
-                  {t.name}
-                </option>
-              ))}
+              {catalog.teachers
+                .filter((t) => !requestFor || t.id === requestFor.teacherId)
+                .map((t) => (
+                  <option value={t.id} key={t.id}>
+                    {t.name}
+                  </option>
+                ))}
             </select>
           </Field>
           <Field label="Disciplina">
@@ -361,9 +377,11 @@ function StudentForm({
   onClose,
   onDone,
   canRetire = false,
+  propose = false,
 }: {
   data: BookData;
   canRetire?: boolean;
+  propose?: boolean;
   student?: Enrollment;
   onClose: () => void;
   onDone: () => void;
@@ -374,11 +392,23 @@ function StudentForm({
       title={student ? "Editar estudiante" : "Agregar estudiante"}
       onClose={onClose}
     >
+      {propose && (
+        <p className="proposal-note">
+          Este cambio requiere aprobación. El libro seguirá igual hasta que
+          administración lo confirme.
+        </p>
+      )}
       <SubmitForm
         onDone={onDone}
-        label={student ? "Guardar cambios" : "Agregar al libro"}
-        onSubmit={(f) =>
-          api(`/books/${data.book.id}/students`, {
+        label={
+          propose
+            ? "Enviar solicitud"
+            : student
+              ? "Guardar cambios"
+              : "Agregar al libro"
+        }
+        onSubmit={(f) => {
+          const input = {
             enrollment_id: student?.id,
             full_name: f.get("full_name"),
             joined_on:
@@ -388,8 +418,17 @@ function StudentForm({
             ...(!student
               ? { slots: readSlots(f, data.book.sessions_per_week) }
               : {}),
-          })
-        }
+          };
+          return api(
+            `/books/${data.book.id}/${propose ? "requests" : "students"}`,
+            propose
+              ? {
+                  kind: student ? "student.update" : "student.create",
+                  data: input,
+                }
+              : input,
+          );
+        }}
       >
         <Field label="Nombre completo">
           <input
@@ -468,8 +507,10 @@ function ScheduleForm({
   student,
   onClose,
   onDone,
+  propose = false,
 }: {
   data: BookData;
+  propose?: boolean;
   student: Enrollment;
   onClose: () => void;
   onDone: () => void;
@@ -479,15 +520,26 @@ function ScheduleForm({
     .sort((a, b) => b.effective_from.localeCompare(a.effective_from));
   return (
     <Modal title={`Horario de ${student.full_name}`} onClose={onClose}>
+      {propose && (
+        <p className="proposal-note">
+          Propón el horario y la fecha del cambio. Solo se aplicará después de
+          la aprobación administrativa.
+        </p>
+      )}
       <SubmitForm
+        label={propose ? "Enviar solicitud" : "Guardar cambios"}
         onDone={onDone}
-        onSubmit={(f) =>
-          api(`/books/${data.book.id}/schedule`, {
+        onSubmit={(f) => {
+          const input = {
             enrollment_id: student.id,
             effective_from: f.get("effective_from"),
             slots: readSlots(f, data.book.sessions_per_week),
-          })
-        }
+          };
+          return api(
+            `/books/${data.book.id}/${propose ? "requests" : "schedule"}`,
+            propose ? { kind: "schedule.update", data: input } : input,
+          );
+        }}
       >
         <p className="muted">
           El horario anterior se conserva hasta la fecha del cambio.
@@ -1074,28 +1126,45 @@ function BookView({
     [studentModal, setStudentModal] = useState<Enrollment | "new" | null>(null),
     [scheduleModal, setScheduleModal] = useState<Enrollment | null>(null),
     [studentList, setStudentList] = useState("active"),
-    [scheduleDate, setScheduleDate] = useState(localToday());
-  const refresh = () =>
+    [scheduleDate, setScheduleDate] = useState(localToday()),
+    [proposalNotice, setProposalNotice] = useState(""),
+    [requestVersion, setRequestVersion] = useState(0),
+    [bookProposal, setBookProposal] = useState<Catalog | null>(null);
+  const refresh = (recenter = false) =>
     api<BookData>(`/books/${bookId}`)
       .then((d) => {
         setData(d);
-        setScheduleDate(
-          localToday() < d.period.start_date
-            ? d.period.start_date
-            : localToday() > d.period.end_date
-              ? d.period.end_date
-              : localToday(),
-        );
+        if (recenter)
+          setScheduleDate(
+            localToday() < d.period.start_date
+              ? d.period.start_date
+              : localToday() > d.period.end_date
+                ? d.period.end_date
+                : localToday(),
+          );
         setError("");
       })
       .catch((e) => setError(e.message));
   useEffect(() => {
-    void refresh();
+    void refresh(true);
   }, [bookId]);
+  useEffect(() => {
+    const onFocus = () => {
+      if (!studentModal && !scheduleModal && !bookProposal) void refresh();
+    };
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, [bookId, studentModal, scheduleModal, bookProposal]);
   async function done() {
     await refresh();
     setStudentModal(null);
     setScheduleModal(null);
+    if (access?.kind !== "admin") {
+      setProposalNotice(
+        "Solicitud enviada a administración. El cambio aparecerá cuando sea aprobado.",
+      );
+      setRequestVersion((v) => v + 1);
+    }
   }
   if (!data)
     return (
@@ -1122,6 +1191,7 @@ function BookView({
     ["schedule", "Horario", CalendarDays],
     ["students", "Estudiantes", Users],
     ["reports", "Resumen", ChartNoAxesCombined],
+    ["requests", "Solicitudes", Clock3],
   ] as const;
   const Container = embedded ? "div" : "main";
   return (
@@ -1163,7 +1233,10 @@ function BookView({
               role="tab"
               aria-selected={tab === key}
               key={key}
-              onClick={() => setTab(key)}
+              onClick={() => {
+                setTab(key);
+                void refresh();
+              }}
               className={tab === key ? "selected" : ""}
             >
               <Icon size={19} />
@@ -1178,6 +1251,29 @@ function BookView({
         aria-label={tabs.find((t) => t[0] === tab)?.[1]}
       >
         {error && <Alert>{error}</Alert>}
+        {proposalNotice && (
+          <div className="success" role="status">
+            <span>{proposalNotice}</span>
+            <button className="button small" onClick={() => setTab("requests")}>
+              Ver solicitudes
+            </button>
+          </div>
+        )}
+        {tab === "requests" && (
+          <RequestList
+            bookId={bookId}
+            onRefresh={refresh}
+            version={requestVersion}
+            onProposeBook={
+              access?.kind !== "admin"
+                ? () =>
+                    api<Catalog>("/catalog")
+                      .then(setBookProposal)
+                      .catch((e) => setError(e.message))
+                : undefined
+            }
+          />
+        )}
         {tab === "attendance" && (
           <AttendanceGrid data={data} setData={setData} />
         )}{" "}
@@ -1319,6 +1415,12 @@ function BookView({
                         <strong>{s.time}</strong>
                         <span>{e.full_name}</span>
                         <small>{data.book.duration_minutes} minutos</small>
+                        <span className="schedule-edit-cue">
+                          <Pencil size={12} />
+                          {access?.kind === "admin"
+                            ? "Editar horario"
+                            : "Proponer cambio"}
+                        </span>
                       </button>
                     ))}
                   {access?.kind === "admin" &&
@@ -1352,7 +1454,8 @@ function BookView({
       {studentModal && (
         <StudentForm
           data={data}
-          canRetire={access?.kind === "admin"}
+          canRetire={true}
+          propose={access?.kind !== "admin"}
           student={studentModal === "new" ? undefined : studentModal}
           onClose={() => setStudentModal(null)}
           onDone={() => void done()}
@@ -1362,8 +1465,21 @@ function BookView({
         <ScheduleForm
           data={data}
           student={scheduleModal}
+          propose={access?.kind !== "admin"}
           onClose={() => setScheduleModal(null)}
           onDone={() => void done()}
+        />
+      )}
+      {bookProposal && (
+        <CreateBook
+          catalog={bookProposal}
+          requestFor={{ bookId, teacherId: data.book.teacher_id }}
+          onClose={() => setBookProposal(null)}
+          onDone={() => {
+            setBookProposal(null);
+            setRequestVersion((v) => v + 1);
+            setProposalNotice("Propuesta de libro enviada a administración.");
+          }}
         />
       )}
     </Container>
@@ -1655,6 +1771,7 @@ function Admin({
   onClose: () => void;
 }) {
   const [tab, setTab] = useState("overview"),
+    [pendingCount, setPendingCount] = useState(0),
     [suspensions, setSuspensions] = useState<Suspension[]>([]),
     [error, setError] = useState(""),
     [notice, setNotice] = useState(""),
@@ -1662,7 +1779,10 @@ function Admin({
     [passwordKind, setPasswordKind] = useState("book");
   const load = () =>
     api("/admin")
-      .then((v) => setSuspensions(v.suspensions))
+      .then((v) => {
+        setSuspensions(v.suspensions);
+        setPendingCount(v.pending_count || 0);
+      })
       .catch((e) => setError(e.message));
   useEffect(() => {
     void load();
@@ -1690,6 +1810,7 @@ function Admin({
       <div className="book-tabs">
         {[
           ["overview", "Vista general"],
+          ["requests", `Pendientes por aprobar (${pendingCount})`],
           ["schedules", "Horarios"],
           ["students", "Estudiantes"],
           ["suspensions", "Suspensiones"],
@@ -1718,6 +1839,9 @@ function Admin({
           </p>
         )}
         {error && <Alert>{error}</Alert>}
+        {tab === "requests" && (
+          <RequestList admin onRefresh={load} onReviewed={refresh} />
+        )}
         {["overview", "schedules", "students"].includes(tab) && (
           <AdminWorkspace catalog={catalog} mode={tab} />
         )}
@@ -1966,7 +2090,7 @@ function Admin({
                   onChange={(e) => setPasswordKind(e.target.value)}
                 >
                   <option value="book">Un libro</option>
-                  <option value="creator">Crear libros</option>
+
                   <option value="admin">Administración</option>
                 </select>
               </Field>
@@ -2007,6 +2131,7 @@ export default function App() {
     [selected, setSelected] = useState<Book | null>(null),
     [dialog, setDialog] = useState<Access["kind"] | null>(null),
     [create, setCreate] = useState(false),
+    [createAfterLogin, setCreateAfterLogin] = useState(false),
     [filter, setFilter] = useState("");
   async function refresh() {
     const c = await api<Catalog>("/catalog");
@@ -2043,8 +2168,12 @@ export default function App() {
     if (requested === "book") {
       setPage("book");
       window.location.hash = `book/${selected!.id}`;
-    } else if (requested === "admin") setPage("admin");
-    else setCreate(true);
+    } else if (requested === "admin") {
+      if (createAfterLogin) {
+        setCreate(true);
+        setCreateAfterLogin(false);
+      } else setPage("admin");
+    } else setCreate(true);
   }
   async function logout() {
     try {
@@ -2066,6 +2195,7 @@ export default function App() {
             e.preventDefault();
             setPage("home");
             window.location.hash = "";
+            void refresh().catch((e) => setError(e.message));
           }}
         >
           <img
@@ -2121,9 +2251,9 @@ export default function App() {
               <button
                 className="button primary"
                 onClick={() =>
-                  ["admin", "creator"].includes(access?.kind || "")
+                  access?.kind === "admin"
                     ? setCreate(true)
-                    : setDialog("creator")
+                    : (setCreateAfterLogin(true), setDialog("admin"))
                 }
               >
                 <Plus size={19} /> Crear un libro
@@ -2193,7 +2323,7 @@ export default function App() {
                 <h3>No hay libros registrados</h3>
                 <p>
                   Administración puede agregar profesores y períodos. Luego,
-                  cada profesor crea su libro.
+                  administración crea los libros de cada profesor.
                 </p>
               </div>
             )}
@@ -2218,6 +2348,7 @@ export default function App() {
           onBack={() => {
             setPage("home");
             window.location.hash = "";
+            void refresh().catch((e) => setError(e.message));
           }}
           onAdmin={() => setPage("admin")}
         />
@@ -2237,7 +2368,10 @@ export default function App() {
         <PasswordDialog
           kind={dialog}
           book={selected || undefined}
-          onClose={() => setDialog(null)}
+          onClose={() => {
+            setDialog(null);
+            setCreateAfterLogin(false);
+          }}
           onLogin={onLogin}
         />
       )}{" "}
@@ -2248,12 +2382,12 @@ export default function App() {
           onDone={async (id) => {
             setCreate(false);
             await refresh();
-            setAccess(null);
             const c = await api<Catalog>("/catalog");
             const b = c.books.find((b) => b.id === id);
             if (b) {
               setSelected(b);
-              setDialog("book");
+              setPage("book");
+              window.location.hash = `book/${b.id}`;
             }
           }}
         />

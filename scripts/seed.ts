@@ -12,15 +12,11 @@ if (
   );
 const passwords = {
   admin: process.env.CAC_ADMIN_PASSWORD,
-  creator: process.env.CAC_CREATOR_PASSWORD,
   book: process.env.CAC_DEMO_BOOK_PASSWORD,
 };
-if (
-  Object.values(passwords).some((v) => !v || v.length < 6 || v.length > 128) ||
-  passwords.admin === passwords.creator
-)
+if (Object.values(passwords).some((v) => !v || v.length < 6 || v.length > 128))
   throw new Error(
-    "Configura contraseñas de demostración distintas: CAC_ADMIN_PASSWORD, CAC_CREATOR_PASSWORD y CAC_DEMO_BOOK_PASSWORD.",
+    "Configura contraseñas de demostración distintas: CAC_ADMIN_PASSWORD y CAC_DEMO_BOOK_PASSWORD.",
   );
 await transaction(async (c) => {
   if ((await c.query("SELECT id FROM books LIMIT 1")).rowCount) {
@@ -37,10 +33,7 @@ await transaction(async (c) => {
     "INSERT INTO periods(id,name,start_date,end_date) VALUES($1,$2,$3,$4)",
     Object.values(period),
   );
-  for (const [kind, pw] of [
-    ["admin", passwords.admin!],
-    ["creator", passwords.creator!],
-  ])
+  for (const [kind, pw] of [["admin", passwords.admin!]])
     await c.query(
       "INSERT INTO access_keys(kind,password_hash) VALUES($1,$2) ON CONFLICT(kind) DO NOTHING",
       [kind, await hashPassword(pw)],

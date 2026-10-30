@@ -16,28 +16,9 @@ import {
 } from "./service";
 import { lessonsFor, summarize, labels } from "../src/domain";
 import ExcelJS from "exceljs";
-const id = z.string().uuid();
-const name = z.string().trim().min(1).max(120);
-const password = z.string().min(6, "Usa al menos 6 caracteres.").max(128);
-const date = z
-  .string()
-  .regex(/^\d{4}-\d{2}-\d{2}$/)
-  .refine((s) => {
-    const d = new Date(s + "T12:00:00Z");
-    return !isNaN(d.valueOf()) && d.toISOString().slice(0, 10) === s;
-  }, "Fecha inválida.");
-const slot = z.object({
-  day: z.number().int().min(0).max(6),
-  time: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),
-});
-const slots = z
-  .array(slot)
-  .min(1)
-  .max(7)
-  .refine(
-    (v) => new Set(v.map((s) => `${s.day}/${s.time}`)).size === v.length,
-    "No repitas el mismo día y hora.",
-  );
+import { id, name, password, date, slots } from "./validation";
+import { applyBookChange, createBook } from "./changes";
+import { proposeChange, listRequests, reviewRequest } from "./requests";
 const json = (
   value: unknown,
   status = 200,
@@ -108,6 +89,11 @@ export async function handleApi(
           password: z.string().min(1).max(128),
         })
         .parse(await body(req));
+      if (input.kind === "creator")
+        throw new HttpError(
+          403,
+          "Solo administración puede crear libros. Ingresa al panel administrativo.",
+        );
       if (input.kind === "book" && !input.book_id)
         throw new HttpError(400, "Selecciona un libro.");
       // Attempt counters commit independently so failed authentication cannot roll them back.
@@ -235,37 +221,47 @@ export async function handleApi(
         });
       }
       if (path === "/books" && req.method === "POST") {
-        if (!access || !["creator", "admin"].includes(access.kind))
-          throw new HttpError(
-            403,
-            "Necesitas la contraseña para crear libros.",
-          );
+        requireAdmin(access);
+        return json(await createBook(c, access, await body(req)), 201);
+      }
+      const requestPath = path.match(/^\/books\/([a-f0-9-]+)\/requests$/);
+      if (requestPath) {
+        const bookId = id.parse(requestPath[1]);
+        requireBook(access, bookId);
+        if (req.method === "GET")
+          return json({ requests: await listRequests(c, access!, bookId) });
         const input = z
           .object({
-            teacher_id: id,
-            period_id: id,
-            discipline: name,
-            sessions_per_week: z.number().int().min(1).max(7),
-            password,
+            kind: z.enum([
+              "student.create",
+              "student.update",
+              "schedule.update",
+              "book.create",
+            ]),
+            data: z.unknown(),
           })
           .parse(await body(req));
-        const bookId = randomUUID();
-        await c.query(
-          "INSERT INTO books(id,teacher_id,period_id,discipline,sessions_per_week,password_hash) VALUES($1,$2,$3,$4,$5,$6)",
-          [
-            bookId,
-            input.teacher_id,
-            input.period_id,
-            input.discipline,
-            input.sessions_per_week,
-            await hashPassword(input.password),
-          ],
+        return json(
+          await proposeChange(c, access!, bookId, input.kind, input.data),
+          202,
         );
-        await audit(c, access, "book.create", bookId, {
-          teacher_id: input.teacher_id,
-          discipline: input.discipline,
-        });
-        return json({ id: bookId }, 201);
+      }
+      if (path === "/admin/requests") {
+        requireAdmin(access);
+        return json({ requests: await listRequests(c, access) });
+      }
+      const reviewPath = path.match(/^\/admin\/requests\/([a-f0-9-]+)$/);
+      if (reviewPath && req.method === "POST") {
+        requireAdmin(access);
+        const input = z
+          .object({
+            decision: z.enum(["approve", "reject"]),
+            note: z.string().trim().max(500).default(""),
+          })
+          .parse(await body(req));
+        return json(
+          await reviewRequest(c, access, id.parse(reviewPath[1]), input),
+        );
       }
       const bookPath = path.match(
         /^\/books\/([a-f0-9-]+)(?:\/(students|schedule|attendance|export))?$/,
@@ -288,181 +284,23 @@ export async function handleApi(
           await setAttendance(c, access!, bookId, input);
           return json({ ok: true });
         }
-        if (action === "students" && req.method === "POST") {
-          const input = z
-            .object({
-              enrollment_id: id.optional(),
-              student_id: id.optional(),
-              full_name: name,
-              joined_on: date,
-              left_on: date.nullable().optional(),
-              slots: slots.optional(),
-            })
-            .parse(await body(req));
-          if (access!.kind !== "admin" && input.left_on != null)
-            requireAdmin(access);
-          await lockBook(c, bookId);
-          const data = visibleBook(await loadBook(c, bookId), access!);
-          if (
-            input.joined_on < data.period.start_date ||
-            input.joined_on > data.period.end_date ||
-            (input.left_on &&
-              (input.left_on < input.joined_on ||
-                input.left_on > data.period.end_date))
-          )
-            throw new HttpError(
-              400,
-              "Las fechas de matrícula deben estar dentro del período y en orden.",
+        if (
+          (action === "students" || action === "schedule") &&
+          req.method === "POST"
+        ) {
+          const raw = await body(req);
+          if (access!.kind === "admin")
+            return json(
+              await applyBookChange(c, access!, bookId, action, raw),
+              action === "students" && !raw?.enrollment_id ? 201 : 200,
             );
-          if (input.enrollment_id) {
-            const e = data.enrollments.find(
-              (e) => e.id === input.enrollment_id,
-            );
-            if (!e) throw new HttpError(404, "Estudiante no encontrado.");
-            if (input.joined_on !== e.joined_on)
-              throw new HttpError(
-                400,
-                "La fecha de ingreso se conserva para proteger el historial.",
-              );
-            await c.query("UPDATE students SET full_name=$1 WHERE id=$2", [
-              input.full_name,
-              e.student_id,
-            ]);
-            if (access!.kind === "admin" && input.left_on !== undefined)
-              await c.query("UPDATE enrollments SET left_on=$1 WHERE id=$2", [
-                input.left_on,
-                e.id,
-              ]);
-            await audit(c, access!, "enrollment.update", bookId, {
-              enrollment_id: e.id,
-              full_name: input.full_name,
-              left_on:
-                access!.kind === "admin" && input.left_on !== undefined
-                  ? input.left_on
-                  : e.left_on,
-            });
-            return json({ id: e.id });
-          }
-          if (
-            !input.slots ||
-            input.slots.length !== data.book.sessions_per_week
-          )
-            throw new HttpError(
-              400,
-              "Completa el horario de todas las sesiones semanales.",
-            );
-          let studentId = input.student_id;
-          if (studentId) {
-            // Only admin may reuse records across books. Book access may reuse its own existing student IDs.
-            if (
-              access!.kind !== "admin" &&
-              !data.enrollments.some((e) => e.student_id === studentId)
-            )
-              throw new HttpError(
-                403,
-                "No tienes acceso a esa ficha de estudiante.",
-              );
-            if (
-              !(
-                await c.query("SELECT id FROM students WHERE id=$1", [
-                  studentId,
-                ])
-              ).rowCount
-            )
-              throw new HttpError(404, "Estudiante no encontrado.");
-          } else {
-            studentId = randomUUID();
-            await c.query("INSERT INTO students(id,full_name) VALUES($1,$2)", [
-              studentId,
-              input.full_name,
-            ]);
-          }
-          const enrollmentId = randomUUID();
-          await c.query(
-            "INSERT INTO enrollments(id,student_id,book_id,joined_on,left_on) VALUES($1,$2,$3,$4,$5)",
-            [
-              enrollmentId,
-              studentId,
-              bookId,
-              input.joined_on,
-              input.left_on || null,
-            ],
-          );
-          await c.query(
-            "INSERT INTO schedule_versions(id,enrollment_id,effective_from,slots) VALUES($1,$2,$3,$4)",
-            [
-              randomUUID(),
-              enrollmentId,
-              input.joined_on,
-              JSON.stringify(input.slots),
-            ],
-          );
-          await audit(c, access!, "enrollment.create", bookId, {
-            enrollment_id: enrollmentId,
-            student_id: studentId,
-          });
-          return json({ id: enrollmentId }, 201);
-        }
-        if (action === "schedule" && req.method === "POST") {
-          const input = z
-            .object({ enrollment_id: id, effective_from: date, slots })
-            .parse(await body(req));
-          await lockBook(c, bookId);
-          const data = visibleBook(await loadBook(c, bookId), access!);
-          const e = data.enrollments.find((e) => e.id === input.enrollment_id);
-          if (!e) throw new HttpError(404, "Estudiante no encontrado.");
-          if (
-            input.slots.length !== data.book.sessions_per_week ||
-            input.effective_from < e.joined_on ||
-            input.effective_from > (e.left_on || data.period.end_date)
-          )
-            throw new HttpError(
-              400,
-              "Revisa la fecha y la cantidad de sesiones del horario.",
-            );
-          // Do not silently orphan attendance already entered after the effective date.
-          const candidate = {
-            ...data,
-            schedules: [
-              ...data.schedules.filter(
-                (s) =>
-                  !(
-                    s.enrollment_id === e.id &&
-                    s.effective_from === input.effective_from
-                  ),
-              ),
-              { id: randomUUID(), ...input },
-            ],
-          };
-          const proposed = lessonsFor(candidate, input.effective_from);
-          if (
-            data.attendance.some(
-              (a) =>
-                a.enrollment_id === e.id &&
-                a.date >= input.effective_from &&
-                !proposed.some(
-                  (l) =>
-                    l.enrollment_id === e.id &&
-                    l.date === a.date &&
-                    l.slot === a.slot,
-                ),
-            )
-          )
-            throw new HttpError(
-              409,
-              "Hay asistencias registradas que quedarían fuera del nuevo horario. Usa una fecha posterior o deja esas marcas pendientes antes de cambiarlo.",
-            );
-          await c.query(
-            "INSERT INTO schedule_versions(id,enrollment_id,effective_from,slots) VALUES($1,$2,$3,$4) ON CONFLICT(enrollment_id,effective_from) DO UPDATE SET slots=EXCLUDED.slots",
-            [
-              randomUUID(),
-              e.id,
-              input.effective_from,
-              JSON.stringify(input.slots),
-            ],
-          );
-          await audit(c, access!, "schedule.set", bookId, input);
-          return json({ ok: true });
+          const kind =
+            action === "schedule"
+              ? "schedule.update"
+              : raw?.enrollment_id
+                ? "student.update"
+                : "student.create";
+          return json(await proposeChange(c, access!, bookId, kind, raw), 202);
         }
         if (action === "export" && req.method === "GET") {
           const from = date.parse(url.searchParams.get("from")),
@@ -563,6 +401,13 @@ export async function handleApi(
       if (path === "/admin" && req.method === "GET") {
         requireAdmin(access);
         return json({
+          pending_count: Number(
+            (
+              await c.query(
+                "SELECT count(*) FROM change_requests WHERE status='pending'",
+              )
+            ).rows[0].count,
+          ),
           suspensions: (
             await c.query(
               "SELECT id,scope,target_id,start_date::text,end_date::text,reason FROM suspensions ORDER BY start_date DESC",
@@ -690,7 +535,7 @@ export async function handleApi(
         if (action === "password") {
           const input = z
             .object({
-              kind: z.enum(["admin", "creator", "book"]),
+              kind: z.enum(["admin", "book"]),
               book_id: id.optional(),
               password,
             })
@@ -708,21 +553,6 @@ export async function handleApi(
               [input.book_id],
             );
           } else {
-            const other = input.kind === "admin" ? "creator" : "admin";
-            const existing = (
-              await c.query(
-                "SELECT password_hash FROM access_keys WHERE kind=$1 FOR UPDATE",
-                [other],
-              )
-            ).rows[0];
-            if (
-              existing &&
-              (await verifyPassword(input.password, existing.password_hash))
-            )
-              throw new HttpError(
-                400,
-                "Las contraseñas de administración y creación deben ser distintas.",
-              );
             await c.query(
               "INSERT INTO access_keys(kind,password_hash) VALUES($1,$2) ON CONFLICT(kind) DO UPDATE SET password_hash=EXCLUDED.password_hash",
               [input.kind, await hashPassword(input.password)],

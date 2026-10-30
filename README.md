@@ -22,7 +22,7 @@ Abrir `http://127.0.0.1:5173`. `npm run dev` sirve React y la API en el mismo or
 - `DATABASE_URL`: conexión **pooled** de la rama seleccionada.
 - `DATABASE_URL_UNPOOLED`: conexión **directa**, únicamente para migraciones.
 - `APP_ENV`: `development`, `preview` o `production`.
-- `CAC_ADMIN_PASSWORD` y `CAC_CREATOR_PASSWORD`: contraseñas iniciales distintas, de al menos seis caracteres. `db:passwords` las convierte en hashes. El servidor usa los hashes de PostgreSQL, no estas variables.
+- `CAC_ADMIN_PASSWORD`: contraseña administrativa inicial de al menos seis caracteres. `db:passwords` la convierte en un hash. La credencial independiente de creación de libros dejó de utilizarse. El servidor usa los hashes de PostgreSQL, no estas variables.
 - El archivo `.env` está excluido de Git. Ninguna variable del servidor lleva prefijo `VITE_`.
 
 La rama utilizada en esta implementación es `dev-cac-v1`, del proyecto Neon `registro-asistencia-cac`. La rama principal permanece separada.
@@ -42,11 +42,11 @@ No hay contraseñas predeterminadas en el repositorio. Las de esta sesión está
 ## Uso
 
 1. Administración ingresa con la contraseña administrativa y agrega profesores y períodos lectivos.
-2. El profesor usa la contraseña de creación para abrir un libro: selecciona su nombre y período, escribe la disciplina y el número de sesiones semanales, y define la contraseña del libro.
-3. Dentro del libro registra estudiantes: nombre completo, ingreso y día/hora de cada sesión. La duración parte en 45 minutos y administración puede ajustarla por libro.
+2. Administración crea los libros: selecciona profesor y período, escribe la disciplina y el número de sesiones semanales, y define la contraseña del libro. Un profesor con acceso a un libro puede proponer otro para su misma disciplina docente desde Solicitudes; administración debe aprobar su creación.
+3. Dentro del libro el profesor propone estudiantes: nombre completo, ingreso y día/hora de cada sesión. El registro aparece después de la aprobación administrativa. Administración también puede registrar estudiantes directamente. La duración parte en 45 minutos y administración puede ajustarla por libro.
 4. La hoja **Asistencia** muestra estudiantes en filas y semanas de lunes a domingo en columnas. Cada sesión muestra su fecha real. Los cambios se guardan al elegir estado; los fallos muestran **Reintentar**.
 5. **Horario** muestra la distribución recurrente vigente en una fecha. Sus cambios conservan el pasado. Si un cambio dejaría marcas existentes fuera de horario, el servidor pide otra fecha o retirar esas marcas explícitamente antes de continuar.
-6. **Estudiantes** permite corregir el nombre; solo administración puede fijar o quitar la fecha de retiro. El ingreso original se conserva. Un reemplazante se registra como estudiante independiente.
+6. **Estudiantes** permite proponer correcciones de nombre y retiros; solo administración puede confirmarlos o aplicarlos directamente. El ingreso original se conserva. Un reemplazante se registra como estudiante independiente.
 7. Administración suspende fechas o intervalos, inclusive ambos extremos, para el CAC, un profesor con todos sus libros o un libro. Puede quitar una suspensión y recuperar las marcas subyacentes.
 8. **Resumen** filtra por fechas y exporta un `.xlsx` con resumen por estudiante, total del libro y detalle de sesiones. El total del libro se pondera por sesiones, no por promedio de porcentajes individuales.
 
@@ -71,7 +71,7 @@ Las fechas se manejan como fechas locales; la semana actual usa `America/Santiag
 | ----------------------------------------------------- | ------------------------------------------------------------------------------ |
 | `GET /catalog`                                        | Portada pública: libros, profesores y períodos, sin estudiantes ni contraseñas |
 | `GET /session`, `POST /login`, `POST /logout`         | Acceso y sesión                                                                |
-| `POST /books`                                         | Crear libro con acceso de creación o administración                            |
+| `POST /books`                                         | Crear libro exclusivamente con acceso administrativo                           |
 | `GET /books/:id`                                      | Matrículas, horarios, asistencia y suspensiones del libro autorizado           |
 | `POST /books/:id/students`                            | Crear matrícula o actualizar nombre/retiro                                     |
 | `POST /books/:id/schedule`                            | Horario con fecha de vigencia                                                  |
@@ -114,3 +114,20 @@ Administración abre por defecto una vista global de asistencia por período y r
 Solo administración puede establecer una fecha de retiro o ver las fichas y registros de estudiantes retirados, también al consultar o exportar períodos anteriores. La API filtra fichas, horarios y asistencias antes de entregarlos a una sesión de libro. Un retiro se aplica desde su fecha; la última fecha sigue siendo computable en el historial administrativo. No se borran datos ni se transfieren marcas al reemplazante. Los horarios de retirados aparecen disponibles cuando ningún estudiante activo ocupa el mismo día y hora; un reemplazo deja de mostrar ese horario como disponible. No se ha definido un aforo máximo por curso.
 
 `GET /api/admin/overview` entrega los datos de todos los libros exclusivamente con una sesión administrativa. Las pruebas comprueban la restricción de retiro, la no exposición de datos a profesores y la liberación y ocupación de horarios.
+
+## Solicitudes y aprobación administrativa
+
+Los profesores registran y corrigen asistencia directamente. Las altas y modificaciones de estudiantes, retiros y horarios se envían como solicitudes; no alteran el libro mientras están pendientes. La hoja Solicitudes permite consultar estados y observaciones, proponer nuevos libros y actualizar el libro después de una aprobación. Los horarios también se pueden proponer desde cada estudiante o su tarjeta en la hoja Horario.
+
+Administración dispone de Pendientes por aprobar, con propuestas, datos anteriores, observaciones y botones Aprobar y aplicar / Rechazar. Aprobar valida otra vez y aplica el cambio en la misma transacción que marca la solicitud como aprobada. Rechazar conserva los datos vigentes. Una propuesta obsoleta no puede sobrescribir cambios administrativos posteriores; debe rechazarse y enviarse actualizada. Las solicitudes idénticas pendientes se deduplican y una solicitud revisada no puede aplicarse dos veces. La contraseña de un libro propuesto se guarda como hash y nunca aparece en las listas de solicitudes.
+
+La migración `002_change_requests.sql` agrega la bandeja y los estados. El código de validación de cambios es compartido entre las operaciones administrativas directas y las aprobaciones. Las propuestas se validan en un savepoint que se revierte antes de guardar la solicitud; no se confirma ningún cambio provisional en estudiantes, libros ni horarios.
+
+- `GET /api/books/:id/requests`: solicitudes del libro autorizado.
+- `POST /api/books/:id/requests`: propuesta de estudiante, ficha/retiro, horario o libro; respuesta 202.
+- Las rutas existentes de modificación de estudiantes y horarios también devuelven 202 y crean una solicitud cuando el acceso es de profesor.
+- `GET /api/admin/requests`: bandeja e historial administrativos.
+- `POST /api/admin/requests/:id`: decisión `approve` o `reject`, con observación opcional.
+- `POST /api/books`: creación administrativa directa; un acceso de profesor o la antigua credencial de creación reciben 403.
+
+Los profesores solo pueden proponer cambios en el libro al que tienen acceso y libros nuevos para el profesor asociado a él. El historial administrativo de estudiantes retirados sigue restringido a administración. Las pruebas de integración verifican propuestas sin aplicación prematura, aprobación, rechazo, conflictos, deduplicación, permisos y contraseñas protegidas.
