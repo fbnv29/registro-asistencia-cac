@@ -18,7 +18,7 @@ Maca usa un tono cercano y divertido, con un chiste musical breve por respuesta 
 
 ## Desarrollo local
 
-Abrir `.env` en la raíz del proyecto y añadir `GEMINI_API_KEY` y `GEMINI_MODEL=gemini-2.5-flash-lite`. Guardar y reiniciar `npm run dev`. El servidor existente carga `.env` con `dotenv/config`. El archivo está excluido de Git: no copiar la clave a `.env.example`, al chat o al código del navegador. Sin clave, se conserva la interpretación interna identificada en la respuesta. La configuración local no se transmite automáticamente a Netlify.
+Abrir `.env` en la raíz del proyecto y añadir `GEMINI_API_KEY` y `GEMINI_MODEL=gemini-3.5-flash-lite`. Guardar y reiniciar `npm run dev`. El servidor existente carga `.env` con `dotenv/config`. El archivo está excluido de Git: no copiar la clave a `.env.example`, al chat o al código del navegador. Sin clave, se conserva la interpretación interna identificada en la respuesta. La configuración local no se transmite automáticamente a Netlify.
 
 ## Despliegue
 
@@ -29,14 +29,14 @@ Abrir `.env` en la raíz del proyecto y añadir `GEMINI_API_KEY` y `GEMINI_MODEL
 |---|---|
 | `MACA_PROVIDER` | `gemini` |
 | `GEMINI_API_KEY` | Clave privada de Gemini Developer API |
-| `GEMINI_MODEL` | `gemini-2.5-flash-lite` |
+| `GEMINI_MODEL` | `gemini-3.5-flash-lite` |
 | `MACA_DAILY_LIMIT` | `30` |
 | `MACA_MINUTE_LIMIT` | `6` |
 
 3. Ejecutar `npm run build`, desplegar la rama y probar con una sesión administrativa. Aplicar migraciones al entorno de destino antes de habilitar el nuevo código. Mantener la separación de base de datos de previews existente.
-4. Verificar una pregunta real con Gemini y luego un error de cuota. La clave no está configurada en el entorno usado para esta implementación; las pruebas externas del proveedor utilizan dobles. Sin clave, Maca funciona mediante un clasificador determinista y lo identifica en la respuesta.
+4. Verificar una pregunta real con Gemini y luego un error de cuota. La integración del proveedor se cubre con dobles. En la prueba local real, Google rechazó 2.5 Flash-Lite para usuarios nuevos y recomendó 3.5 Flash-Lite. Con el modelo actualizado, el proyecto de prueba devolvió HTTP 402 por créditos agotados: la consulta real sigue pendiente con una clave que permita acceso gratuito. No se activó facturación. Sin clave, Maca funciona mediante un clasificador determinista y lo identifica en la respuesta.
 
-No hay claves `VITE_`, instalaciones de servicios adicionales ni activación automática de facturación. Google publica un nivel gratuito para 2.5 Flash-Lite, sujeto a disponibilidad y cuotas del proyecto: [precios oficiales](https://ai.google.dev/gemini-api/docs/pricing). Confirmar el nivel gratuito en AI Studio; una clave de un proyecto con facturación habilitada puede generar cargos aunque la aplicación limite sus llamadas.
+No hay claves `VITE_`, instalaciones de servicios adicionales ni activación automática de facturación. Google publica un nivel gratuito para 3.5 Flash-Lite, sujeto a disponibilidad y cuotas del proyecto: [precios oficiales](https://ai.google.dev/gemini-api/docs/pricing). Confirmar el nivel gratuito en AI Studio; una clave de un proyecto con facturación habilitada puede generar cargos aunque la aplicación limite sus llamadas.
 
 ## Seguridad y límites
 

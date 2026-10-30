@@ -311,7 +311,7 @@ export async function askMaca(raw: unknown, sessionHash: string) {
       let response: Response;
       try {
         response = await fetch(
-          `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(process.env.GEMINI_MODEL || "gemini-2.5-flash-lite")}:generateContent`,
+          `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(process.env.GEMINI_MODEL || "gemini-3.5-flash-lite")}:generateContent`,
           {
             method: "POST",
             headers: {
@@ -366,6 +366,12 @@ export async function askMaca(raw: unknown, sessionHash: string) {
           "MACA_PROVIDER_UNAVAILABLE",
         );
       }
+      if (response.status === 402)
+        throw new HttpError(
+          503,
+          "El proyecto de Gemini exige créditos y no permite esta consulta. Usa una clave de un proyecto con acceso gratuito. Maca no activa facturación.",
+          "MACA_PROVIDER_PAYMENT_REQUIRED",
+        );
       if (!response.ok)
         throw new HttpError(
           response.status === 429 ? 429 : 503,
