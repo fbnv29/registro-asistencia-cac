@@ -2951,3 +2951,8 @@ h1 em {
   line-height: 1.6;
   display: block;
 }
+
+.maca-joke {
+  color: #006b80;
+  font-style: italic;
+}

@@ -3,6 +3,7 @@ import { api } from "./api";
 import type { Book, Teacher } from "./domain";
 type Result = {
   text: string;
+  musical_aside?: string;
   from: string;
   to: string;
   source: string;
@@ -73,8 +74,12 @@ export function MacaAssistant({
     <div className="maca">
       <h2>🤖 Maca Asistente</h2>
       <p>
-        Hola, soy Maca. Puedo analizar asistencia, pendientes, suspensiones y
-        cambios de horario del CAC. Solo consulto datos; no modifico registros.
+        ¡Hola! Soy Maca, tu asistente del CAC: reviso asistencia, pendientes,
+        suspensiones y cambios de horario con los números afinados y una cuota
+        de humor musical. Solo consulto datos; no modifico registros.
+      </p>
+      <p className="maca-joke">
+        🎵 ¿Qué hace una pianista cuando organiza sus pendientes? ¡Toma nota!
       </p>
       <p className="muted">
         Historial temporal en esta pestaña. Los nombres escritos en el chat no
@@ -142,6 +147,9 @@ export function MacaAssistant({
             <p>
               <strong>Maca:</strong> {m.result.text}
             </p>
+            {m.result.musical_aside && (
+              <p className="maca-joke">🎵 {m.result.musical_aside}</p>
+            )}
             <p>
               {m.result.from} al {m.result.to} · America/Santiago ·{" "}
               {m.result.source}
@@ -198,7 +206,7 @@ export function MacaAssistant({
           {error}
         </p>
       )}
-      {busy && <p role="status">Maca está consultando…</p>}
+      {busy && <p role="status">Estoy afinando los números…</p>}
       <form
         onSubmit={(e) => {
           e.preventDefault();

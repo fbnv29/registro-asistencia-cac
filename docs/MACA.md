@@ -12,6 +12,14 @@ Una sesión es una clase individual de un estudiante. Una marca de ausencia acre
 
 El porcentaje conserva la regla institucional `(presentes + justificadas) / (presentes + ausentes + justificadas)`. Pendientes y suspensiones no forman parte del denominador. Se aplican feriados, excepciones, retiros y versiones de horario existentes. La comparación utiliza el período inmediatamente anterior con igual número de días. La evolución se agrupa por mes.
 
+## Personalidad
+
+Maca usa un tono cercano y divertido, con un chiste musical breve por respuesta exitosa. El humor se elige de un repertorio local y se presenta aparte de las cifras; no utiliza información de estudiantes o profesores ni requiere llamadas adicionales a Gemini. Los errores y límites se comunican de forma directa.
+
+## Desarrollo local
+
+Abrir `.env` en la raíz del proyecto y añadir `GEMINI_API_KEY` y `GEMINI_MODEL=gemini-2.5-flash-lite`. Guardar y reiniciar `npm run dev`. El servidor existente carga `.env` con `dotenv/config`. El archivo está excluido de Git: no copiar la clave a `.env.example`, al chat o al código del navegador. Sin clave, se conserva la interpretación interna identificada en la respuesta. La configuración local no se transmite automáticamente a Netlify.
+
 ## Despliegue
 
 1. Aplicar las migraciones en una rama de desarrollo, con `DATABASE_URL_UNPOOLED` directo: `npm run db:migrate` (alternativa: `node --import tsx scripts/migrate.ts`). Migraciones nuevas: 005, 006 y 007.

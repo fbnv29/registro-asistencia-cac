@@ -226,6 +226,24 @@ export function analyze(
     truncated: rows.length > 100,
   };
 }
+// Humor editorial local: no datos personales ni llamadas adicionales a Gemini.
+const musicalJokes = [
+  "¿Qué hace una pianista cuando organiza sus pendientes? ¡Toma nota!",
+  "¿Por qué el metrónomo llega puntual? Porque lleva el tiempo en serio.",
+  "Mi instrumento favorito para revisar cifras es el bajo: me gusta llegar al fondo del asunto.",
+  "¿Qué le dijo una nota a otra? ¡Nos vemos en el siguiente compás!",
+  "Intenté contar un chiste sobre silencios… pero preferí hacer una pausa.",
+  "¿Cómo saluda un coro? ¡Con mucho gusto y en varias voces!",
+  "Me pidieron un chiste en clave de sol, pero con este horario ya vamos en clave de café.",
+  "¿El instrumento favorito de una persona organizada? El acordeón: todo bien coordinado.",
+];
+function musicalAside(requestId: string) {
+  const index = [...requestId].reduce(
+    (sum, char) => sum + char.charCodeAt(0),
+    0,
+  );
+  return musicalJokes[index % musicalJokes.length];
+}
 const cache = new Map<
   string,
   { expires: number; value: ReturnType<typeof analyze> }
@@ -470,6 +488,7 @@ export async function askMaca(raw: unknown, sessionHash: string) {
     outcome = "ok";
     return {
       ...result,
+      musical_aside: musicalAside(input.request_id),
       from,
       to,
       metric: intent.metric,
