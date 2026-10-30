@@ -40,10 +40,14 @@ por CLI/API siguen siendo posibles: usarlos únicamente cuando se autorice publi
   disparar desde GitHub. En un proyecto manual Netlify no ofrece el selector
   Stopped builds ni conserva ese ajuste sin configurar un repositorio; no se
   afirma que dicho selector esté activado. Se mantiene Git desvinculado.
-- Variables no secretas preparadas: `APP_ENV=production` para el contexto
-  production, `MACA_PROVIDER=internal`, límites de Maca de 30/día y 6/minuto.
-- La base de destino y su conexión se preparan por separado según se elija piloto
-  o producción. No se copiaron a Netlify las credenciales del `.env` de desarrollo.
+- Piloto preparado con `APP_ENV=preview`, `MACA_PROVIDER=internal`, límites de
+  Maca de 30/día y 6/minuto, y `CAC_PREVIEW_DATABASE_HOST` para su conexión.
+- Rama Neon independiente `pilot-netlify-cac` (`br-super-scene-b6p3s9sh`), del
+  proyecto `muddy-firefly-87592079`, derivada de `dev-cac-v1`. Conserva las diez
+  migraciones y las claves administrativas del piloto; no es la base principal.
+- Con autorización explícita del usuario, se guardó su conexión pooled como
+  secreto `DATABASE_URL` en Netlify. El `.env` de desarrollo local no se modificó.
+- La base principal de Neon no se migró ni se utilizará al publicar este piloto.
 - Plan verificado: Free, 300 créditos por ciclo. No se activaron pagos ni recargas.
 
 ## Preparar sin desplegar
