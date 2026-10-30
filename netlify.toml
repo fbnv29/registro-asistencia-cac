@@ -1,5 +1,7 @@
 [build]
-  command = "npm run build"
+  # Manual releases only. Ignore Git builds; reject hooks/retries that bypass ignore.
+  ignore = "exit 0"
+  command = "node ./scripts/netlify-build-disabled.mjs"
   publish = "dist"
 [build.environment]
   NODE_VERSION = "22"
