@@ -4,7 +4,6 @@ import {
   Minus,
   Send,
   SlidersHorizontal,
-  Music2,
   Trash2,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
@@ -144,7 +143,13 @@ export function MacaAssistant({
         }}
       >
         <span className="maca-avatar">
-          <Music2 size={18} />
+          <img
+            src="/brand/maca-avatar.png"
+            alt=""
+            width={34}
+            height={34}
+            draggable={false}
+          />
         </span>
         <span>
           Maca<span className="maca-launcher-caption">Asistente CAC</span>
@@ -169,7 +174,13 @@ export function MacaAssistant({
       >
         <header className="maca-header">
           <span className="maca-avatar">
-            <Music2 size={18} />
+            <img
+              src="/brand/maca-avatar.png"
+              alt=""
+              width={34}
+              height={34}
+              draggable={false}
+            />
           </span>
           <div>
             <h2>Maca</h2>
