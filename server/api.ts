@@ -1,3 +1,4 @@
+import { askMaca } from "./maca";
 import { administer } from "./administration";
 import { chileHolidays } from "./holidays";
 import { randomUUID } from "node:crypto";
@@ -191,6 +192,18 @@ export async function handleApi(
           "Set-Cookie": cookie(token, req),
         });
       });
+    }
+    if (path === "/admin/maca" && req.method === "POST") {
+      const sessionHash = await transaction(async (c) => {
+        requireAdmin(await accessFrom(c, req));
+        const token = (req.headers.get("cookie") || "")
+          .split(";")
+          .map((s) => s.trim())
+          .find((s) => s.startsWith(cookieName + "="))!
+          .slice(cookieName.length + 1);
+        return digest(token);
+      });
+      return json(await askMaca(await body(req), sessionHash));
     }
     return await transaction(async (c) => {
       const access = await accessFrom(c, req);
@@ -699,6 +712,15 @@ export async function handleApi(
         error.status,
       );
     const code = (error as { code?: string }).code;
+    if (code === "23P01")
+      return json(
+        {
+          error:
+            "El horario se superpone con otra clase del mismo profesor. Revisa todos sus libros.",
+          code: "SCHEDULE_CONFLICT",
+        },
+        409,
+      );
     if (code === "23503")
       return json(
         {

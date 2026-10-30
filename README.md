@@ -190,3 +190,7 @@ npm run test:e2e
 Las pruebas de navegador crean y limpian sus propios registros ficticios. Cubren propuesta/aprobación, notas, asistencia persistente, desconexión y reintento, conflicto entre clientes, sesión vencida, archivo, consulta/exportación y navegación por teclado en 390 px. No se ejecutan con datos de producción ni se despliega desde estas pruebas.
 
 Antes de publicar: aplicar migraciones a la base de destino, configurar variables del servidor y contraseñas definitivas mediante `db:passwords` y el panel, confirmar separación entre producción y vistas previas, verificar cookies Secure/HttpOnly en HTTPS, guardado/recarga/exportación en Netlify y configurar retención y recuperación de respaldos según los servicios contratados. `123456` se mantiene solo en el entorno local de este piloto. Validar facilidad de uso con profesores reales durante el piloto.
+
+## 🤖 Maca Asistente
+
+El panel administrativo incorpora análisis institucional de solo lectura, con interpretación opcional mediante Gemini y protección de datos personales. Configuración, uso, seguridad, migraciones y pruebas: [guía de Maca](docs/MACA.md).

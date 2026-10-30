@@ -22,6 +22,7 @@ export async function applyBookChange(
   raw: unknown,
 ) {
   requireAdmin(access);
+  await c.query("SELECT pg_advisory_xact_lock(483723)");
   if (action === "students") {
     const input = z
       .object({

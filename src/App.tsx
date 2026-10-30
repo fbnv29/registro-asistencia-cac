@@ -1,3 +1,4 @@
+import { MacaAssistant } from "./MacaAssistant";
 import React, {
   useEffect,
   useId,
@@ -2083,6 +2084,7 @@ function Admin({
       <div className="book-tabs">
         {[
           ["overview", "Vista general"],
+          ["maca", "🤖 Maca Asistente"],
           ["requests", `Pendientes por aprobar (${pendingCount})`],
           ["schedules", "Horarios"],
           ["students", "Estudiantes"],
@@ -2114,6 +2116,9 @@ function Admin({
           </p>
         )}
         {error && <Alert>{error}</Alert>}
+        {tab === "maca" && (
+          <MacaAssistant books={catalog.books} teachers={catalog.teachers} />
+        )}
         {tab === "manage" && <EntityManager catalog={catalog} save={save} />}
         {tab === "requests" && (
           <RequestList admin onRefresh={load} onReviewed={refresh} />
@@ -2648,6 +2653,7 @@ export default function App() {
           )}
           <button
             className="admin-link"
+            aria-label="Administración"
             onClick={() => {
               if (confirmLeave()) {
                 access?.kind === "admin"

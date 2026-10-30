@@ -2854,3 +2854,100 @@ h1 em {
   flex-wrap: wrap;
   gap: 0.5rem;
 }
+
+.maca {
+  max-width: 960px;
+  margin: auto;
+  overflow-wrap: anywhere;
+}
+.maca-filters {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin: 20px 0;
+}
+.maca-filters label {
+  min-width: 0;
+}
+.maca-filters select,
+.maca-filters input,
+.maca textarea {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+.maca-suggestions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.maca-suggestions button {
+  white-space: normal;
+  text-align: left;
+}
+.maca-message {
+  margin: 20px 0;
+  padding: 16px;
+  border: 1px solid #d9d5ce;
+  border-radius: 14px;
+  background: #faf9f6;
+}
+.maca form {
+  display: grid;
+  gap: 10px;
+  margin-top: 20px;
+}
+@media (max-width: 600px) {
+  .maca-filters {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .maca-message {
+    padding: 12px;
+  }
+}
+.maca input,
+.maca select,
+.maca textarea {
+  font: inherit;
+  color: inherit;
+  padding: 10px 12px;
+  border: 1px solid #c8cdd6;
+  border-radius: 8px;
+  background: white;
+}
+.maca label {
+  display: grid;
+  gap: 6px;
+  font-weight: 600;
+}
+.maca button {
+  font: inherit;
+  border: 1px solid #b7cdd1;
+  border-radius: 8px;
+  padding: 10px 14px;
+  color: #006b80;
+  background: #f0f8f9;
+  cursor: pointer;
+}
+.maca button:hover:not(:disabled) {
+  background: #e0f0f3;
+}
+.maca button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.maca button[type="submit"] {
+  color: white;
+  background: #006b80;
+}
+.maca textarea:focus,
+.maca input:focus,
+.maca select:focus {
+  outline: 2px solid #006b80;
+  outline-offset: 2px;
+}
+.maca-message small {
+  color: #586177;
+  line-height: 1.6;
+  display: block;
+}

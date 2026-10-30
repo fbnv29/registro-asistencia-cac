@@ -101,6 +101,7 @@ export async function proposeChange(
   raw: unknown,
 ) {
   requireBook(access, bookId);
+  await c.query("SELECT pg_advisory_xact_lock(483723)");
   await lockBook(c, bookId);
   const data = visibleBook(await loadBook(c, bookId), access);
   requireWritable(data);
@@ -190,6 +191,7 @@ export async function reviewRequest(
     ])
   ).rows[0];
   if (!pointer) throw new HttpError(404, "Solicitud no encontrada.");
+  await c.query("SELECT pg_advisory_xact_lock(483723)");
   await lockBook(c, pointer.book_id);
   const request = (
     await c.query("SELECT * FROM change_requests WHERE id=$1 FOR UPDATE", [

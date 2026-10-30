@@ -12,6 +12,9 @@ import {
 import { scheduleConflict } from "../src/domain";
 
 export async function administer(c: PoolClient, access: Access, raw: any) {
+  // Schedule edits serialize across books; ordinary attendance keeps its per-book lock.
+  if (["edit-book", "duration", "edit-period"].includes(raw.action))
+    await c.query("SELECT pg_advisory_xact_lock(483723)");
   if (raw.action === "archive") {
     const v = z
       .object({
