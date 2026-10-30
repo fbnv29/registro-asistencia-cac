@@ -31,6 +31,21 @@ de funciones y publicaciones, además del plan contratado.
 La protección del archivo no sustituye Stopped builds. Los despliegues manuales
 por CLI/API siguen siendo posibles: usarlos únicamente cuando se autorice publicar.
 
+## Estado de la cuenta verificado el 30 de octubre de 2026
+
+- Proyecto: [registro-asistencia-cac](https://app.netlify.com/projects/registro-asistencia-cac).
+- ID: `773698ff-ef57-4d33-a124-8fbca8915618`, equipo `fbnv29` (FavLab).
+- Creado vacío mediante CLI; sin despliegues ni publicación.
+- Repositorio en Netlify: **Not linked**. No hay despliegue continuo que se pueda
+  disparar desde GitHub. En un proyecto manual Netlify no ofrece el selector
+  Stopped builds ni conserva ese ajuste sin configurar un repositorio; no se
+  afirma que dicho selector esté activado. Se mantiene Git desvinculado.
+- Variables no secretas preparadas: `APP_ENV=production` para el contexto
+  production, `MACA_PROVIDER=internal`, límites de Maca de 30/día y 6/minuto.
+- La base de destino y su conexión se preparan por separado según se elija piloto
+  o producción. No se copiaron a Netlify las credenciales del `.env` de desarrollo.
+- Plan verificado: Free, 300 créditos por ciclo. No se activaron pagos ni recargas.
+
 ## Preparar sin desplegar
 
 ```sh
