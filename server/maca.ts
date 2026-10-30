@@ -1,4 +1,13 @@
 import {
+  conversationContext,
+  smallTalk,
+  hasMetric,
+  hasPeriod,
+  followup,
+  providerQuestion,
+  inheritIntent,
+} from "./maca-conversation";
+import {
   classify,
   ProviderError,
   type MacaIntent,
@@ -20,16 +29,17 @@ import {
 export const macaInput = z
   .object({
     request_id: z.uuid(),
-    question: z.string().trim().min(3).max(600),
+    question: z.string().trim().min(1).max(600),
     from: z.iso.date().optional(),
     to: z.iso.date().optional(),
     book_id: z.uuid().optional(),
     teacher_id: z.uuid().optional(),
+    context: conversationContext.optional(),
   })
   .strict();
 // A strict vocabulary boundary: arbitrary user text, identifiers and numbers NEVER reach an external provider.
 const vocabulary = new Set(
-  "estudiante estudiantes alumno alumnos falta faltas falto faltaron ausente ausentes ausencia ausencias inasistencia inasistencias ausentismo mas mayor quien ranking asistencia asistencias clases clase profesores profesor registraron registrados registros pendientes pendiente libros libro porcentaje mes mensual semana semanal hoy ayer semestre semestral suspendidas suspendidos suspension suspensiones sesiones sesion cambios horario horarios esperando aprobacion solicitudes superpuestos superpuestas superposiciones conflictos evolucion evoluciono tendencia comparar comparacion anterior attendance teachers pending suspended requests conflicts trend today week month semester".split(
+  "estudiante estudiantes alumno alumnos falta faltas falto faltaron ausente ausentes ausencia ausencias inasistencia inasistencias ausentismo mas mayor quien ranking asistencia asistencias clases clase profesores profesor registraron registrados registros pendientes pendiente libros libro porcentaje mes mensual semana semanal hoy ayer semestre semestral suspendidas suspendidos suspension suspensiones sesiones sesion cambios horario horarios esperando aprobacion solicitudes superpuestos superpuestas superposiciones conflictos evolucion evoluciono tendencia compara comparar comparalo comparacion anterior pasado pasada attendance teachers pending suspended requests conflicts trend today week month semester".split(
     " ",
   ),
 );
@@ -325,12 +335,31 @@ export async function askMaca(raw: unknown, sessionHash: string) {
   let outcome = "error";
   try {
     const safe = privateQuestion(input.question);
-    if (!safe)
-      throw new HttpError(
-        400,
-        "Consulta estadísticas de asistencia, pendientes, suspensiones, horarios o aprobaciones.",
-      );
-    let intent = defaultIntent(safe),
+    const chatReply = smallTalk(input.question);
+    const isFollowup = followup(input.question, safe, input.context);
+    const conversationalText =
+      chatReply ||
+      (!hasMetric(safe) && !isFollowup
+        ? hasPeriod(input.question)
+          ? "¿Qué quieres revisar en ese período: asistencia, ausencias o pendientes?"
+          : "Te ayudo con los datos del CAC. ¿Quieres revisar asistencia, quién falta más o algún cambio de horario? Si hablas de un libro o profesor, puedes elegirlo en Filtros."
+        : null);
+    if (conversationalText) {
+      outcome = "ok";
+      return {
+        kind: "conversation" as const,
+        fallback: null,
+        text: conversationalText,
+        rows: [],
+        source: "Maca",
+        usage,
+        generated_at: new Date().toISOString(),
+        context: input.context || null,
+      };
+    }
+    let intent = isFollowup
+        ? inheritIntent(defaultIntent(safe), input.context!)
+        : defaultIntent(safe),
       source = "Interpretación interna";
     const provider = process.env.MACA_PROVIDER || "gemini";
     if (!["gemini", "groq", "internal"].includes(provider))
@@ -358,7 +387,10 @@ export async function askMaca(raw: unknown, sessionHash: string) {
       );
       let classified: Awaited<ReturnType<typeof classify>> | undefined;
       try {
-        classified = await classify(provider as Provider, safe);
+        classified = await classify(
+          provider as Provider,
+          providerQuestion(safe, isFollowup ? input.context : undefined),
+        );
       } catch (error) {
         if (!(error instanceof ProviderError)) throw error;
         fallback = error.reason;
@@ -376,7 +408,9 @@ export async function askMaca(raw: unknown, sessionHash: string) {
           ),
         );
         if (classified.intent) {
-          intent = classified.intent;
+          intent = isFollowup
+            ? inheritIntent(classified.intent, input.context!)
+            : classified.intent;
           // Unambiguous institutional concepts take precedence over model synonyms.
           if (/aprobacion|solicitudes|cambios/.test(safe))
             intent.metric = "requests";
@@ -405,18 +439,11 @@ export async function askMaca(raw: unknown, sessionHash: string) {
         ),
       );
     }
-    if (
-      source.startsWith("Interpretación interna") &&
-      !/estudiant|alumn|falt|ausen|inasistencia|asistencia|clase|sesion|registro|profesor|pendiente|suspend|suspension|solicitud|aprobacion|cambio|superpuest|conflict|superpos|evolu|tendencia/.test(
-        safe,
-      )
-    )
-      throw new HttpError(
-        400,
-        "El modo interno necesita una pregunta explícita sobre asistencia, pendientes, suspensiones, aprobaciones o superposiciones.",
-      );
-    const range = questionRange(input.question, intent),
-      from = input.from || range.from,
+    const range =
+      !hasPeriod(input.question) && input.context
+        ? { from: input.context.from, to: input.context.to }
+        : questionRange(input.question, intent);
+    const from = input.from || range.from,
       to = input.to || range.to;
     if (
       from > to ||
@@ -506,7 +533,7 @@ export async function askMaca(raw: unknown, sessionHash: string) {
                   ? `Revisé la partitura del período: hay ${s.pending} sesiones individuales pendientes de registro. Todavía les falta su nota en el libro; pendiente no significa ausencia.`
                   : intent.metric === "trend"
                     ? `Así va el ritmo de la asistencia: ${figures} En la tabla puedes seguirlo mes a mes.`
-                    : `Te paso la partitura del período: ${figures}`;
+                    : `Vamos con los números: ${figures}`;
       return {
         text:
           intent.metric === "absences" ? `Del ${from} al ${to}: ${text}` : text,
@@ -524,6 +551,8 @@ export async function askMaca(raw: unknown, sessionHash: string) {
     outcome = "ok";
     return {
       ...result,
+      kind: "analysis" as const,
+      context: { metric: intent.metric, from, to },
       from,
       to,
       metric: intent.metric,

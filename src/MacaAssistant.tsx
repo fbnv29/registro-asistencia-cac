@@ -1,3 +1,4 @@
+import type { ConversationContext } from "../server/maca-conversation";
 import {
   MessageCircle,
   Minus,
@@ -10,9 +11,11 @@ import { useEffect, useRef, useState } from "react";
 import { api } from "./api";
 import type { Book, Teacher } from "./domain";
 type Result = {
+  kind?: "analysis" | "conversation";
+  context?: ConversationContext | null;
   text: string;
-  from: string;
-  to: string;
+  from?: string;
+  to?: string;
   source: string;
   warning: string;
   generated_at: string;
@@ -34,11 +37,17 @@ export function MacaAssistant({
   teachers: Teacher[];
 }) {
   const [messages, setMessages] = useState<
-      { question: string; result: Result; filters: string }[]
+      {
+        id: string;
+        question: string;
+        result: Result | null;
+        filters: string;
+        filterKey: string;
+        error?: string;
+      }[]
     >([]),
     [question, setQuestion] = useState(""),
     [busy, setBusy] = useState(false),
-    [error, setError] = useState(""),
     [from, setFrom] = useState(""),
     [to, setTo] = useState(""),
     [book, setBook] = useState(""),
@@ -49,11 +58,12 @@ export function MacaAssistant({
   const inputRef = useRef<HTMLTextAreaElement>(null),
     logRef = useRef<HTMLDivElement>(null),
     launcherRef = useRef<HTMLButtonElement>(null);
+  const followScroll = useRef(true);
   useEffect(() => {
     if (open) inputRef.current?.focus();
   }, [open]);
   useEffect(() => {
-    if (open && logRef.current)
+    if (open && followScroll.current && logRef.current)
       logRef.current.scrollTo({
         top: logRef.current.scrollHeight,
         behavior: "smooth",
@@ -66,35 +76,57 @@ export function MacaAssistant({
 
   async function send(text = question) {
     if (sending.current || !text.trim()) return;
+    const filterKey = JSON.stringify([from, to, book, teacher]);
+    const context = [...messages]
+      .reverse()
+      .find((m) => m.result?.context && m.filterKey === filterKey)
+      ?.result?.context;
+    const requestId = crypto.randomUUID();
+    const selectedBook = books.find((b) => b.id === book);
+    const filters = [
+      selectedBook
+        ? `${selectedBook.teacher_name} · ${selectedBook.discipline}`
+        : "Todos los libros",
+      teachers.find((t) => t.id === teacher)?.name || "Todos los profesores",
+    ].join(" / ");
     sending.current = true;
+    followScroll.current = true;
     setBusy(true);
-    setError("");
+    if (text === question) setQuestion("");
+    setMessages((m) => [
+      ...m.slice(-19),
+      { id: requestId, question: text, result: null, filters, filterKey },
+    ]);
     try {
       const result = await api<Result>("/admin/maca", {
         question: text,
-        request_id: crypto.randomUUID(),
+        request_id: requestId,
+        ...(context ? { context } : {}),
         ...(from ? { from } : {}),
         ...(to ? { to } : {}),
         ...(book ? { book_id: book } : {}),
         ...(teacher ? { teacher_id: teacher } : {}),
       });
-      const selectedBook = books.find((b) => b.id === book);
-      const filters = [
-        selectedBook
-          ? `${selectedBook.teacher_name} · ${selectedBook.discipline}`
-          : "Todos los libros",
-        teachers.find((t) => t.id === teacher)?.name || "Todos los profesores",
-      ].join(" / ");
-      setMessages((m) => [
-        ...m.slice(-19),
-        { question: text, result, filters },
-      ]);
-      setQuestion("");
+      setMessages((m) =>
+        m.map((message) =>
+          message.id === requestId ? { ...message, result } : message,
+        ),
+      );
     } catch (e) {
-      setError(e instanceof Error ? e.message : "No se pudo consultar.");
+      const error =
+        e instanceof Error
+          ? e.message
+          : "No pude completar la consulta. ¿Probamos otra vez?";
+      setMessages((m) =>
+        m.map((message) =>
+          message.id === requestId ? { ...message, error } : message,
+        ),
+      );
     } finally {
       sending.current = false;
       setBusy(false);
+      if (open && document.activeElement === document.body)
+        inputRef.current?.focus();
     }
   }
   return (
@@ -106,7 +138,10 @@ export function MacaAssistant({
         aria-label="Abrir chat con Maca"
         aria-expanded={open}
         aria-controls="maca-chat"
-        onClick={() => setOpen(true)}
+        onClick={() => {
+          followScroll.current = true;
+          setOpen(true);
+        }}
       >
         <span className="maca-avatar">
           <Music2 size={18} />
@@ -138,7 +173,7 @@ export function MacaAssistant({
           </span>
           <div>
             <h2>Maca</h2>
-            <span>Tu asistente del CAC</span>
+            <span>{busy ? "Está escribiendo…" : "Tu asistente del CAC"}</span>
           </div>
           <button
             type="button"
@@ -165,7 +200,6 @@ export function MacaAssistant({
             disabled={busy || !messages.length}
             onClick={() => {
               setMessages([]);
-              setError("");
             }}
           >
             <Trash2 size={14} />
@@ -224,6 +258,12 @@ export function MacaAssistant({
           aria-label="Conversación con Maca"
           aria-live="polite"
           aria-relevant="additions text"
+          onScroll={() => {
+            const el = logRef.current;
+            if (el)
+              followScroll.current =
+                el.scrollHeight - el.scrollTop - el.clientHeight < 70;
+          }}
         >
           <div className="maca-bubble maca-welcome">
             <p>
@@ -250,83 +290,106 @@ export function MacaAssistant({
               ))}
             </div>
           )}
-          {messages.map((m, i) => (
-            <article key={i} className="maca-exchange">
+          {messages.map((m) => (
+            <article key={m.id} className="maca-exchange">
               <div className="maca-bubble maca-user">
                 <span className="sr-only">Tú: </span>
                 {m.question}
               </div>
-              <div className="maca-bubble maca-reply">
-                <p>
-                  <span className="sr-only">Maca: </span>
-                  {m.result.text}
-                </p>
-                {m.result.summary && (
-                  <p className="maca-summary">
-                    <strong>{m.result.summary.pending}</strong> pendientes ·{" "}
-                    <strong>{m.result.summary.suspended}</strong> suspendidas
+              {m.result ? (
+                <div className="maca-bubble maca-reply">
+                  <p>
+                    <span className="sr-only">Maca: </span>
+                    {m.result.text}
                   </p>
-                )}
-                {m.result.rows.length > 0 && (
-                  <div className="table-scroll">
-                    <table className="plain-table">
-                      <thead>
-                        <tr>
-                          {Object.keys(m.result.rows[0]).map((k) => (
-                            <th key={k}>{k}</th>
-                          ))}
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {m.result.rows.map((row, j) => (
-                          <tr key={j}>
-                            {Object.entries(row).map(([k, v]) => (
-                              <td key={k}>{v ?? "Sin registros"}</td>
+                  {m.result.summary && (
+                    <p className="maca-summary">
+                      <strong>{m.result.summary.pending}</strong> pendientes ·{" "}
+                      <strong>{m.result.summary.suspended}</strong> suspendidas
+                    </p>
+                  )}
+                  {m.result.rows.length > 0 && (
+                    <details className="maca-table-details">
+                      <summary>
+                        Ver detalle ({m.result.rows.length} filas)
+                      </summary>
+                      <div className="table-scroll">
+                        <table className="plain-table">
+                          <thead>
+                            <tr>
+                              {Object.keys(m.result.rows[0]).map((k) => (
+                                <th key={k}>{k}</th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {m.result.rows.map((row, j) => (
+                              <tr key={j}>
+                                {Object.entries(row).map(([k, v]) => (
+                                  <td key={k}>{v ?? "Sin registros"}</td>
+                                ))}
+                              </tr>
                             ))}
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-                {m.result.comparison && (
-                  <p>
-                    Período anterior ({m.result.comparison.from} al{" "}
-                    {m.result.comparison.to}): {m.result.comparison.count}{" "}
-                    registradas,{" "}
-                    {m.result.comparison.percentage ?? "sin registros"} %.
-                  </p>
-                )}
-                <details className="maca-result-details">
-                  <summary>Período y detalle</summary>
-                  <p>
-                    {m.result.from} al {m.result.to} · America/Santiago
-                  </p>
-                  <p>{m.filters}</p>
-                  <p>{m.result.source}</p>
-                  <p>{m.result.warning}</p>
-                  <p>
-                    Consultado:{" "}
-                    {new Date(m.result.generated_at).toLocaleString("es-CL", {
-                      timeZone: "America/Santiago",
-                    })}
-                  </p>
-                  <p>
-                    Uso diario: {m.result.usage.used}/{m.result.usage.limit}
-                  </p>
-                </details>
-              </div>
+                          </tbody>
+                        </table>
+                      </div>
+                    </details>
+                  )}
+                  {m.result.comparison && (
+                    <p>
+                      Período anterior ({m.result.comparison.from} al{" "}
+                      {m.result.comparison.to}): {m.result.comparison.count}{" "}
+                      registradas,{" "}
+                      {m.result.comparison.percentage ?? "sin registros"} %.
+                    </p>
+                  )}
+                  {m.result.kind !== "conversation" && (
+                    <details className="maca-result-details">
+                      <summary>Período y detalle</summary>
+                      <p>
+                        {m.result.from} al {m.result.to} · America/Santiago
+                      </p>
+                      <p>{m.filters}</p>
+                      <p>{m.result.source}</p>
+                      <p>{m.result.warning}</p>
+                      <p>
+                        Consultado:{" "}
+                        {new Date(m.result.generated_at).toLocaleString(
+                          "es-CL",
+                          {
+                            timeZone: "America/Santiago",
+                          },
+                        )}
+                      </p>
+                      <p>
+                        Uso diario: {m.result.usage.used}/{m.result.usage.limit}
+                      </p>
+                    </details>
+                  )}
+                </div>
+              ) : m.error ? (
+                <div className="maca-chat-error" role="alert">
+                  <p>{m.error}</p>
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => send(m.question)}
+                  >
+                    Volver a intentar
+                  </button>
+                </div>
+              ) : null}
             </article>
           ))}
           {busy && (
             <div className="maca-bubble maca-processing" role="status">
-              Estoy afinando los números<span aria-hidden="true">…</span>
+              <span className="sr-only">Maca está escribiendo</span>
+              <span className="maca-typing" aria-hidden="true">
+                <i />
+                <i />
+                <i />
+              </span>
             </div>
-          )}
-          {error && (
-            <p role="alert" className="maca-chat-error">
-              {error}
-            </p>
           )}
         </div>
         <form
@@ -342,13 +405,16 @@ export function MacaAssistant({
           <textarea
             ref={inputRef}
             id="maca-question"
-            placeholder="Escríbele a Maca…"
+            placeholder={
+              busy
+                ? "Puedes preparar tu siguiente pregunta…"
+                : "Escríbele a Maca…"
+            }
             rows={1}
             maxLength={600}
             value={question}
             onChange={(e) => setQuestion(e.target.value)}
             required
-            disabled={busy}
             onKeyDown={(e) => {
               if (
                 e.key === "Enter" &&

@@ -6,7 +6,7 @@ Implementación sobre la arquitectura existente: React 19 + Vite + TypeScript, f
 
 Administración → botón flotante «Maca» en la esquina inferior derecha. El chat abre como una ventana compacta, se minimiza desde la cabecera o con Escape y conserva la conversación al cambiar de sección administrativa. Los filtros se despliegan desde «Filtros»; Enter envía y Mayús+Enter agrega una línea. Preguntar por asistencia, profesores con registros, pendientes, suspensiones, solicitudes de horario, superposiciones o evolución mensual. Seleccionar libro/profesor para filtrar; los nombres escritos en el chat no actúan como filtros. Fechas explícitas ISO, meses en español, hoy, ayer, semana, mes y semestre se resuelven en el servidor. Los selectores de fecha prevalecen. El semestre corresponde a enero–junio o julio–diciembre; el período lectivo de cada libro limita las sesiones.
 
-Las conversaciones existen únicamente en memoria del componente (hasta 20 intercambios); desaparecen al salir del panel administrativo o recargar. No se envía historial al proveedor. Las preguntas son independientes: repetir período y filtros cuando corresponda.
+Las conversaciones existen únicamente en memoria del componente (hasta 20 intercambios); desaparecen al salir del panel administrativo o recargar. No se envía historial al proveedor. Maca conserva un contexto estructurado de tema y rango para seguimientos como «¿y este semestre?». El servidor valida ese contexto. Al proveedor solo puede llegar el nombre de la categoría, nunca respuestas anteriores, nombres ni registros. Cambiar los filtros inicia un contexto nuevo. Los saludos y agradecimientos se resuelven localmente sin llamadas externas.
 
 Una sesión es una clase individual de un estudiante. Una marca de ausencia acredita un registro, no que una clase se haya realizado físicamente. El conteo de profesores identifica libros con marcas, no al autor material de las marcas. La cola de cambios pendientes refleja el estado actual, con filtros de profesor/libro, independientemente del rango histórico mostrado.
 
@@ -21,12 +21,12 @@ Maca usa una voz cercana y musical dentro de la propia respuesta: los cambios pe
 Abrir `.env` en la raíz del proyecto y configurar:
 
 ```dotenv
-MACA_PROVIDER=groq
-GROQ_API_KEY=clave_privada
-GROQ_MODEL=openai/gpt-oss-20b
+MACA_PROVIDER=gemini
+GEMINI_API_KEY=clave_privada
+GEMINI_MODEL=gemini-3.5-flash-lite
 ```
 
-Guardar y reiniciar `npm run dev`. El servidor existente carga `.env` con `dotenv/config`. El archivo está excluido de Git: no copiar la clave a `.env.example`, al chat o al código del navegador. La configuración local no se transmite automáticamente a Netlify. Para trabajar exclusivamente con el clasificador determinista, usar `MACA_PROVIDER=internal`; para volver a Google, usar `MACA_PROVIDER=gemini`, `GEMINI_API_KEY` y `GEMINI_MODEL`.
+Guardar y reiniciar `npm run dev`. El servidor existente carga `.env` con `dotenv/config`. El archivo está excluido de Git: no copiar la clave a `.env.example`, al chat o al código del navegador. La configuración local no se transmite automáticamente a Netlify. Para trabajar exclusivamente con el clasificador determinista, usar `MACA_PROVIDER=internal`; para utilizar Groq, configurar `MACA_PROVIDER=groq`, `GROQ_API_KEY` y `GROQ_MODEL=openai/gpt-oss-20b`.
 
 Groq se verificó con una llamada real al adaptador: clasificación JSON válida en 735 ms, 220 tokens de entrada y 45 de salida. El modelo admite salida JSON estricta. La aplicación no habilita herramientas, búsqueda ni acceso a la base para el proveedor. Referencias: [API oficial](https://console.groq.com/docs/api-reference), [salida estructurada](https://console.groq.com/docs/structured-outputs), [política de datos](https://console.groq.com/docs/your-data).
 
@@ -37,18 +37,18 @@ Groq se verificó con una llamada real al adaptador: clasificación JSON válida
 
 | Variable | Valor inicial |
 |---|---|
-| `MACA_PROVIDER` | `groq` (opciones: `groq`, `gemini`, `internal`) |
-| `GROQ_API_KEY` | Clave privada de Groq |
+| `MACA_PROVIDER` | `gemini` (opciones: `groq`, `gemini`, `internal`) |
+| `GROQ_API_KEY` | Opcional, solo con proveedor `groq` |
 | `GROQ_MODEL` | `openai/gpt-oss-20b` |
-| `GEMINI_API_KEY` | Opcional, solo con proveedor `gemini` |
+| `GEMINI_API_KEY` | Clave privada de Gemini |
 | `GEMINI_MODEL` | `gemini-3.5-flash-lite` |
 | `MACA_DAILY_LIMIT` | `30` |
 | `MACA_MINUTE_LIMIT` | `6` |
 
 3. Ejecutar `npm run build`, desplegar la rama y probar con una sesión administrativa. Aplicar migraciones al entorno de destino antes de habilitar el nuevo código. Mantener la separación de base de datos de previews existente.
-4. Verificar una pregunta real con Groq y luego simular un error de cuota. En desarrollo se verificaron preguntas completas con Groq y PostgreSQL (HTTP 200), incluida la cola de aprobaciones contrastada con SQL. Una ejecución completa tardó 2.892 ms. Las pruebas locales cubren cuotas, red, permisos y respuestas malformadas mediante dobles. Sin clave o ante errores externos, Maca utiliza su clasificador determinista y lo identifica en `source` y `fallback`. Las preguntas deben ser explícitas; el respaldo no interpreta contexto de mensajes previos. No cambia automáticamente a otro proveedor externo.
+4. Verificar una pregunta real con Gemini y luego simular un error de cuota. En desarrollo se verificaron preguntas completas con Groq y PostgreSQL (HTTP 200), incluida la cola de aprobaciones contrastada con SQL. Una ejecución completa tardó 2.892 ms. Las pruebas locales cubren cuotas, red, permisos y respuestas malformadas mediante dobles. Sin clave o ante errores externos, Maca utiliza su clasificador determinista y lo identifica en `source` y `fallback`. El respaldo también admite el contexto estructurado validado del último análisis; si falta tema o período, Maca pide precisión. No cambia automáticamente a otro proveedor externo.
 
-Gemini queda como opción configurable: en la prueba real del proyecto de desarrollo devolvió 402 pese a que el panel mostraba nivel gratuito. No se confirmó la causa ni se activó facturación. Maca local utiliza Groq y no envía llamadas a Google mientras `MACA_PROVIDER=groq`.
+La nueva clave de Gemini se verificó en el flujo real local: saludo sin llamadas externas, asistencia semanal y seguimiento «¿y este semestre?» con HTTP 200 y fuente Gemini. En una ejecución, las consultas de datos tardaron 6.717 ms y 4.569 ms, incluyendo PostgreSQL. No se activó facturación ni se cambió el plan del proveedor. Groq permanece disponible como alternativa configurable; no se consulta simultáneamente a ambos proveedores.
 
 
 No hay claves `VITE_`, instalaciones de servicios adicionales ni activación automática de facturación. Groq publica límites gratuitos por modelo: [límites oficiales](https://console.groq.com/docs/rate-limits). Mantener la cuenta en Free; la aplicación no puede comprobar ni modificar el plan de facturación. Google publica un nivel gratuito para 3.5 Flash-Lite, sujeto a disponibilidad y cuotas del proyecto: [precios oficiales](https://ai.google.dev/gemini-api/docs/pricing). Confirmar el nivel gratuito en AI Studio; una clave de un proyecto con facturación habilitada puede generar cargos aunque la aplicación limite sus llamadas.
@@ -100,3 +100,9 @@ La interpretación aplica reglas locales de prioridad para aprobaciones, superpo
 ## Ausencias por estudiante
 
 «¿Qué estudiante falta más?» y «¿Quién tiene más ausencias?» se resuelven directamente en el servidor, sin llamadas a Groq o Gemini. Se agrupan matrículas por el identificador del estudiante entre libros, se ordenan ausencias registradas y se indican empates. Pendientes, justificadas y suspensiones se muestran separados y no aumentan el ranking. Los nombres aparecen únicamente en la respuesta administrativa. Sin rango explícito se consulta el mes en curso hasta hoy; la respuesta incluye las fechas. Los filtros de profesor y libro siguen aplicándose. No tener marcas o no tener ausencias se comunica explícitamente.
+
+## Comportamiento del chat
+
+El mensaje del usuario aparece inmediatamente al enviar. Se muestra un indicador de escritura y el campo permite preparar el siguiente mensaje mientras llega la respuesta; ese borrador no se borra al finalizar. Los errores aparecen junto al mensaje y permiten un nuevo intento manual. Las tablas se despliegan solo al pedir el detalle. El desplazamiento automático se detiene al leer mensajes anteriores. Enter envía; Mayús+Enter agrega una línea. Limpiar la conversación elimina el contexto temporal del componente.
+
+El contexto enviado al backend contiene únicamente categoría y fechas. Se valida con Zod (categoría permitida, fechas y máximo 366 días); no admite SQL ni campos de identidad. Para el proveedor se añade como máximo la categoría al vocabulario filtrado. Las fechas y los filtros se resuelven en el servidor. Las respuestas de saludo, ayuda y aclaración no consumen llamadas al proveedor, aunque cuentan como mensajes aceptados para los límites internos de la aplicación.

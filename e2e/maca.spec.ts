@@ -5,6 +5,11 @@ for (const width of [390, 1280])
   }) => {
     await page.setViewportSize({ width, height: 844 });
     let calls = 0;
+    const payloads: any[] = [];
+    let releaseFirst: () => void = () => {};
+    const firstResponse = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
     await page.route("**/api/**", async (route) => {
       const path = new URL(route.request().url()).pathname;
       let body: unknown = {};
@@ -20,7 +25,15 @@ for (const width of [390, 1280])
       if (path === "/api/admin/overview") body = { books: [] };
       if (path === "/api/admin/maca") {
         calls++;
+        payloads.push(route.request().postDataJSON());
+        if (calls === 1) await firstResponse;
         body = {
+          kind: "analysis",
+          context: {
+            metric: "attendance",
+            from: "2026-10-01",
+            to: "2026-10-30",
+          },
           text: "3 sesiones con asistencia registrada.",
           from: "2026-10-01",
           to: "2026-10-30",
@@ -60,8 +73,25 @@ for (const width of [390, 1280])
         el.form!.requestSubmit();
         el.form!.requestSubmit();
       });
+    await expect(page.getByRole("log")).toContainText("Asistencia de hoy");
+    await expect(page.getByRole("status")).toContainText(
+      "Maca está escribiendo",
+    );
+    await page.getByLabel("Pregunta institucional").fill("y este semestre?");
+    releaseFirst();
     await expect(page.getByRole("log")).toContainText("3 sesiones");
+    await expect(page.getByLabel("Pregunta institucional")).toHaveValue(
+      "y este semestre?",
+    );
     expect(calls).toBe(1);
+    await page.getByLabel("Pregunta institucional").press("Enter");
+    await expect.poll(() => calls).toBe(2);
+    expect(payloads[1].context).toEqual({
+      metric: "attendance",
+      from: "2026-10-01",
+      to: "2026-10-30",
+    });
+    await expect(page.getByRole("status")).toHaveCount(0);
     await page.getByRole("button", { name: "Minimizar chat de Maca" }).click();
     await expect(launcher).toBeFocused();
     await page.getByRole("button", { name: "Profesores", exact: true }).click();

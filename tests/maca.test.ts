@@ -488,3 +488,124 @@ it("agrupa al mismo estudiante entre libros sin confundir homónimos", () => {
     analyze([a, b], "2026-06-01", "2026-06-30", "absences").absenceLeader?.ties,
   ).toBe(2);
 });
+
+it("responde saludos y agradecimientos sin consumir llamadas externas", async () => {
+  vi.stubEnv("GEMINI_API_KEY", "test");
+  const fetch = vi.fn();
+  vi.stubGlobal("fetch", fetch);
+  expect(
+    await askMaca({ ...payload(), question: "Hola Maca" }, "session"),
+  ).toMatchObject({
+    kind: "conversation",
+    text: expect.stringContaining("¡Hola!"),
+  });
+  expect(
+    await askMaca({ ...payload(), question: "muchas gracias" }, "session"),
+  ).toMatchObject({
+    kind: "conversation",
+    text: expect.stringContaining("¡De nada!"),
+  });
+  expect(fetch).not.toHaveBeenCalled();
+});
+it("pide precisión en una conversación sin devolver un error rojo", async () => {
+  expect(
+    await askMaca({ ...payload(), question: "y este semestre?" }, "session"),
+  ).toMatchObject({
+    kind: "conversation",
+    text: expect.stringContaining("¿Qué quieres revisar"),
+  });
+});
+it("mantiene el ranking al preguntar por otro período sin enviar identidades al proveedor", async () => {
+  vi.stubEnv("GEMINI_API_KEY", "test");
+  const fetch = vi.fn();
+  vi.stubGlobal("fetch", fetch);
+  const result = await askMaca(
+    {
+      ...payload(),
+      question: "y este semestre?",
+      book_id: crypto.randomUUID(),
+      context: { metric: "absences", from: "2026-06-01", to: "2026-06-30" },
+    },
+    "session",
+  );
+  expect(result).toMatchObject({
+    kind: "analysis",
+    metric: "absences",
+    context: { metric: "absences" },
+  });
+  expect(fetch).not.toHaveBeenCalled();
+});
+it("rechaza contexto inventado con SQL, nombres o rangos excesivos", () => {
+  expect(() =>
+    macaInput.parse({
+      ...payload(),
+      context: {
+        metric: "DELETE FROM books",
+        from: "2026-01-01",
+        to: "2026-01-02",
+      },
+    }),
+  ).toThrow();
+  expect(() =>
+    macaInput.parse({
+      ...payload(),
+      context: { metric: "absences", from: "2020-01-01", to: "2026-01-01" },
+    }),
+  ).toThrow();
+  expect(() =>
+    macaInput.parse({
+      ...payload(),
+      context: {
+        metric: "absences",
+        from: "2026-01-01",
+        to: "2026-01-02",
+        student_name: "Privado",
+      },
+    }),
+  ).toThrow();
+});
+
+it("los seguimientos solo envían la categoría al proveedor, nunca fechas ni nombres", async () => {
+  vi.stubEnv("GEMINI_API_KEY", "test");
+  const fetch = vi.fn(
+    async () =>
+      new Response(
+        JSON.stringify({
+          candidates: [
+            {
+              content: {
+                parts: [
+                  {
+                    text: '{"metric":"attendance","period":"semester","compare":false}',
+                  },
+                ],
+              },
+            },
+          ],
+          usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 10 },
+        }),
+      ),
+  );
+  vi.stubGlobal("fetch", fetch);
+  await askMaca(
+    {
+      ...payload(),
+      question: "y este semestre María Pérez?",
+      book_id: crypto.randomUUID(),
+      context: { metric: "attendance", from: "2026-01-01", to: "2026-01-31" },
+    },
+    "session",
+  );
+  const body = JSON.parse((fetch.mock.calls[0] as any)[1].body);
+  expect(body.contents[0].parts[0].text).toBe("semestre contexto attendance");
+  expect(JSON.stringify(body)).not.toContain("María");
+  expect(JSON.stringify(body)).not.toContain("2026-01");
+});
+it("acepta respuestas cortas como ok sin errores de formulario", async () => {
+  expect(
+    await askMaca({ ...payload(), question: "ok" }, "session"),
+  ).toMatchObject({
+    kind: "conversation",
+    text: expect.stringContaining("Dale"),
+  });
+});
