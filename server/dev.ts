@@ -13,7 +13,7 @@ const server = createServer(async (req, res) => {
     let length = 0;
     for await (const chunk of req) {
       length += chunk.length;
-      if (length > 32000) {
+      if (length > 256000) {
         res.writeHead(413).end();
         return;
       }

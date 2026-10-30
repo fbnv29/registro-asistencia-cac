@@ -1043,6 +1043,39 @@ describeIntegration(
         ).status,
       ).toBe(200);
     });
+    it("serializa altas simultáneas entre libros y revierte por completo la que pierde", async () => {
+      const names = [
+        `Simultáneo A ${randomUUID()}`,
+        `Simultáneo B ${randomUUID()}`,
+      ];
+      const responses = await Promise.all(
+        bookIds
+          .slice(0, 2)
+          .map((book, i) =>
+            call(
+              `/books/${book}/students`,
+              {
+                full_name: names[i],
+                joined_on: "2026-03-01",
+                slots: [{ day: 6, time: "10:00" }],
+              },
+              adminCookie,
+            ),
+          ),
+      );
+      expect(responses.map((r) => r.status).sort()).toEqual([201, 409]);
+      const loser = responses.findIndex((r) => r.status === 409);
+      expect((await responses[loser].json()).code).toBe("SCHEDULE_CONFLICT");
+      await transaction(async (c) => {
+        expect(
+          (
+            await c.query("SELECT id FROM students WHERE full_name=$1", [
+              names[loser],
+            ])
+          ).rowCount,
+        ).toBe(0);
+      });
+    });
     it("limita intentos y restablece contraseñas de libro revocando sesiones", async () => {
       for (let i = 0; i < 15; i++)
         await call(

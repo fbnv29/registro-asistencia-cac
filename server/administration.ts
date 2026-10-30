@@ -12,8 +12,80 @@ import {
 import { scheduleConflict } from "../src/domain";
 
 export async function administer(c: PoolClient, access: Access, raw: any) {
+  if (raw.action === "delete-permanently") {
+    if (access.kind !== "admin")
+      throw new HttpError(403, "Solo administración puede eliminar registros.");
+    const v = z
+      .object({
+        entity: z.enum(["teacher", "book", "student"]),
+        id,
+        confirmed: z.literal(true),
+        confirmation: z.literal("ELIMINAR"),
+      })
+      .parse(raw);
+    await c.query("SELECT pg_advisory_xact_lock(483723)");
+    const table = { teacher: "teachers", book: "books", student: "students" }[
+      v.entity
+    ];
+    // Lock books before their children, consistently with schedule mutations.
+    await c.query("SELECT id FROM books ORDER BY id FOR UPDATE");
+    const row = await c.query(
+      `SELECT id FROM ${table} WHERE id=$1 FOR UPDATE`,
+      [v.id],
+    );
+    if (!row.rowCount) throw new HttpError(404, "Registro no encontrado.");
+    if (v.entity === "teacher") {
+      if (
+        (
+          await c.query("SELECT id FROM books WHERE teacher_id=$1 LIMIT 1", [
+            v.id,
+          ])
+        ).rowCount
+      )
+        throw new HttpError(
+          409,
+          "Reasigna o elimina los libros de este profesor antes de borrarlo definitivamente.",
+        );
+    } else {
+      const enrollments = (
+        await c.query(
+          `SELECT id FROM enrollments WHERE ${v.entity === "book" ? "book_id" : "student_id"}=$1 ORDER BY id FOR UPDATE`,
+          [v.id],
+        )
+      ).rows.map((r) => r.id);
+      await c.query(
+        "DELETE FROM attendance WHERE lesson_id IN (SELECT id FROM lessons WHERE enrollment_id=ANY($1::uuid[]))",
+        [enrollments],
+      );
+      await c.query("DELETE FROM lessons WHERE enrollment_id=ANY($1::uuid[])", [
+        enrollments,
+      ]);
+      await c.query(
+        "DELETE FROM schedule_versions WHERE enrollment_id=ANY($1::uuid[])",
+        [enrollments],
+      );
+      await c.query("DELETE FROM enrollments WHERE id=ANY($1::uuid[])", [
+        enrollments,
+      ]);
+      if (v.entity === "book") {
+        await c.query("DELETE FROM change_requests WHERE book_id=$1", [v.id]);
+        await c.query("DELETE FROM access_sessions WHERE book_id=$1", [v.id]);
+      }
+    }
+    if (v.entity !== "student")
+      await c.query("DELETE FROM suspensions WHERE scope=$1 AND target_id=$2", [
+        v.entity,
+        v.id,
+      ]);
+    await c.query(`DELETE FROM ${table} WHERE id=$1`, [v.id]);
+    await audit(c, access, "entity.delete-permanently", null, {
+      entity: v.entity,
+      id: v.id,
+    });
+    return;
+  }
   // Schedule edits serialize across books; ordinary attendance keeps its per-book lock.
-  if (["edit-book", "duration", "edit-period"].includes(raw.action))
+  if (["edit-book", "duration", "edit-period", "archive"].includes(raw.action))
     await c.query("SELECT pg_advisory_xact_lock(483723)");
   if (raw.action === "archive") {
     const v = z
@@ -158,7 +230,9 @@ export async function administer(c: PoolClient, access: Access, raw: any) {
       ...data,
       book: { ...data.book, duration_minutes: v.duration_minutes },
     };
-    for (const student of candidate.enrollments) {
+    for (const student of v.duration_minutes > data.book.duration_minutes
+      ? candidate.enrollments
+      : []) {
       const conflict = scheduleConflict(candidate, student.id);
       if (conflict)
         throw new HttpError(409, `${student.full_name}: ${conflict.message}`);

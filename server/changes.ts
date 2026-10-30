@@ -12,7 +12,13 @@ import {
   requireWritable,
   type Access,
 } from "./service";
-import { lessonsFor, scheduleConflict } from "../src/domain";
+import { addDays, lessonsFor, scheduleConflict } from "../src/domain";
+import {
+  buildSchedulePreview,
+  scheduleSchema,
+  validateTransfers,
+} from "./scheduleReview";
+import { lessonKey } from "../src/scheduleReview";
 import { hashPassword } from "./security";
 export async function applyBookChange(
   c: PoolClient,
@@ -67,7 +73,11 @@ export async function applyBookChange(
             row.id === e.id ? { ...row, left_on: input.left_on || null } : row,
           ),
         };
-        const conflict = scheduleConflict(candidate, e.id, e.left_on);
+        const conflict = scheduleConflict(
+          candidate,
+          e.id,
+          addDays(e.left_on, 1),
+        );
         if (conflict) throw new HttpError(409, conflict.message);
       }
       await c.query("UPDATE students SET full_name=$1 WHERE id=$2", [
@@ -163,62 +173,82 @@ export async function applyBookChange(
     return { id: enrollmentId };
   }
   if (action === "schedule") {
-    const input = z
-      .object({ enrollment_id: id, effective_from: date, slots })
-      .parse(raw);
+    const input = scheduleSchema.parse(raw);
     await lockBook(c, bookId);
     const data = visibleBook(await loadBook(c, bookId), access!);
     requireWritable(data);
-    const e = data.enrollments.find((e) => e.id === input.enrollment_id);
-    if (!e) throw new HttpError(404, "Estudiante no encontrado.");
+    const preview = buildSchedulePreview(data, input);
+    validateTransfers(preview, input);
     if (
-      input.slots.length !== data.book.sessions_per_week ||
-      input.effective_from < e.joined_on ||
-      input.effective_from > (e.left_on || data.period.end_date)
-    )
-      throw new HttpError(
-        400,
-        "Revisa la fecha y la cantidad de sesiones del horario.",
-      );
-    // Do not silently orphan attendance already entered after the effective date.
-    const candidate = {
-      ...data,
-      schedules: [
-        ...data.schedules.filter(
-          (s) =>
-            !(
-              s.enrollment_id === e.id &&
-              s.effective_from === input.effective_from
-            ),
-        ),
-        { id: randomUUID(), ...input },
-      ],
-    };
-    const conflict = scheduleConflict(candidate, e.id, input.effective_from);
-    if (conflict) throw new HttpError(409, conflict.message);
-    const proposed = lessonsFor(candidate, input.effective_from);
-    if (
-      data.attendance.some(
-        (a) =>
-          a.enrollment_id === e.id &&
-          a.date >= input.effective_from &&
-          !proposed.some(
-            (l) =>
-              l.enrollment_id === e.id &&
-              l.date === a.date &&
-              l.slot === a.slot,
-          ),
+      !preview.affected.length &&
+      preview.previous.length === preview.proposed.length &&
+      preview.previous.every(
+        (s, i) =>
+          s.day === preview.proposed[i].day &&
+          s.time === preview.proposed[i].time,
       )
     )
-      throw new HttpError(
-        409,
-        "Hay asistencias registradas que quedarían fuera del nuevo horario. Usa una fecha posterior o deja esas marcas pendientes antes de cambiarlo.",
+      return { ok: true };
+    const e = data.enrollments.find((e) => e.id === input.enrollment_id)!;
+    const transfers = input.transfers.map((t) => ({
+      source: preview.affected.find(
+        (l) => lessonKey(l) === `${t.from_date}/${t.from_slot}`,
+      )!,
+      destination: preview.destinations.find(
+        (l) => lessonKey(l) === `${t.to_date}/${t.to_slot}`,
+      )!,
+    }));
+    // Clear all sources first so swaps and slot reorderings cannot overwrite marks.
+    for (const { source } of transfers) {
+      await c.query(
+        "DELETE FROM attendance WHERE lesson_id IN (SELECT id FROM lessons WHERE enrollment_id=$1 AND date=$2 AND slot=$3)",
+        [e.id, source.date, source.slot],
       );
+      await c.query(
+        "UPDATE lessons SET revision=revision+1 WHERE enrollment_id=$1 AND date=$2 AND slot=$3",
+        [e.id, source.date, source.slot],
+      );
+    }
     await c.query(
       "INSERT INTO schedule_versions(id,enrollment_id,effective_from,slots) VALUES($1,$2,$3,$4) ON CONFLICT(enrollment_id,effective_from) DO UPDATE SET slots=EXCLUDED.slots",
       [randomUUID(), e.id, input.effective_from, JSON.stringify(input.slots)],
     );
-    await audit(c, access!, "schedule.set", bookId, input);
+    for (const { source, destination } of transfers) {
+      const row = (
+        await c.query(
+          "INSERT INTO lessons(id,enrollment_id,date,slot,time,revision) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(enrollment_id,date,slot) DO UPDATE SET time=EXCLUDED.time,revision=GREATEST(lessons.revision,EXCLUDED.revision)+1 RETURNING id",
+          [
+            randomUUID(),
+            e.id,
+            destination.date,
+            destination.slot,
+            destination.time,
+            (source.revision || 0) + 1,
+          ],
+        )
+      ).rows[0];
+      await c.query("INSERT INTO attendance(lesson_id,status) VALUES($1,$2)", [
+        row.id,
+        source.underlying || source.status,
+      ]);
+    }
+    await audit(c, access!, "schedule.set", bookId, {
+      ...input,
+      transfers: transfers.map(({ source, destination }) => ({
+        from: {
+          date: source.date,
+          slot: source.slot,
+          time: source.time,
+          revision: source.revision,
+        },
+        to: {
+          date: destination.date,
+          slot: destination.slot,
+          time: destination.time,
+        },
+        status: source.underlying || source.status,
+      })),
+    });
     return { ok: true };
   }
 
