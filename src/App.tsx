@@ -1,5 +1,6 @@
 import React, {
   useEffect,
+  useId,
   useRef,
   useState,
   type FormEvent,
@@ -27,7 +28,9 @@ import {
   Pencil,
   CircleHelp,
 } from "lucide-react";
-import { api } from "./api";
+import { api, apiBlob, ApiError } from "./api";
+import { markDraft, confirmLeave } from "./drafts";
+import EntityManager from "./EntityManager";
 import RequestList from "./RequestList";
 import {
   addDays,
@@ -67,10 +70,16 @@ function Alert({ children }: { children: ReactNode }) {
   );
 }
 function Field({ label, children }: { label: string; children: ReactNode }) {
+  const fieldId = useId();
   return (
     <label className="field">
-      <span>{label}</span>
-      {children}
+      <span id={fieldId}>{label}</span>
+      {React.isValidElement(children)
+        ? React.cloneElement(
+            children as React.ReactElement<{ "aria-labelledby"?: string }>,
+            { "aria-labelledby": fieldId },
+          )
+        : children}
     </label>
   );
 }
@@ -84,16 +93,18 @@ function Modal({
   children: ReactNode;
 }) {
   const ref = useRef<HTMLDivElement>(null);
+  const titleId = useId();
   useEffect(() => {
     const previous = document.activeElement as HTMLElement;
     const root = ref.current;
     root?.querySelector<HTMLElement>("input,select,button")?.focus();
     function key(e: KeyboardEvent) {
-      if (e.key === "Escape") onClose();
+      if (root && !root.contains(document.activeElement)) return;
+      if (e.key === "Escape" && confirmLeave()) onClose();
       if (e.key === "Tab" && root) {
         const items = Array.from(
           root.querySelectorAll<HTMLElement>(
-            "button:not(:disabled),input:not(:disabled),select:not(:disabled),a[href]",
+            "button:not(:disabled),input:not(:disabled),select:not(:disabled),textarea:not(:disabled),a[href]",
           ),
         );
         const first = items[0],
@@ -117,19 +128,25 @@ function Modal({
     <div
       className="overlay"
       onClick={(e) => {
-        if (e.target === e.currentTarget) onClose();
+        if (e.target === e.currentTarget && confirmLeave()) onClose();
       }}
     >
       <div
         className="modal"
         role="dialog"
         aria-modal="true"
-        aria-labelledby="modal-title"
+        aria-labelledby={titleId}
         ref={ref}
       >
         <div className="modal-head">
-          <h2 id="modal-title">{title}</h2>
-          <button className="icon-button" aria-label="Cerrar" onClick={onClose}>
+          <h2 id={titleId}>{title}</h2>
+          <button
+            className="icon-button"
+            aria-label="Cerrar"
+            onClick={() => {
+              if (confirmLeave()) onClose();
+            }}
+          >
             <X />
           </button>
         </div>
@@ -151,15 +168,20 @@ function SubmitForm({
 }) {
   const [busy, setBusy] = useState(false),
     [error, setError] = useState("");
+  const draft = useRef({});
+  useEffect(() => () => markDraft(draft.current, false), []);
   return (
     <form
+      onChange={() => markDraft(draft.current, true)}
       onSubmit={async (e: FormEvent<HTMLFormElement>) => {
         e.preventDefault();
         const form = new FormData(e.currentTarget);
         setBusy(true);
         setError("");
         try {
+          markDraft(draft.current, true);
           await onSubmit(form);
+          markDraft(draft.current, false);
           onDone?.();
         } catch (e) {
           setError((e as Error).message);
@@ -315,7 +337,11 @@ function CreateBook({
           <Field label="Tu nombre">
             <select required name="teacher_id">
               {catalog.teachers
-                .filter((t) => !requestFor || t.id === requestFor.teacherId)
+                .filter(
+                  (t) =>
+                    !t.archived_at &&
+                    (!requestFor || t.id === requestFor.teacherId),
+                )
                 .map((t) => (
                   <option value={t.id} key={t.id}>
                     {t.name}
@@ -334,11 +360,13 @@ function CreateBook({
           <div className="two-fields">
             <Field label="Período lectivo">
               <select name="period_id">
-                {catalog.periods.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name}
-                  </option>
-                ))}
+                {catalog.periods
+                  .filter((p) => !p.archived_at)
+                  .map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name}
+                    </option>
+                  ))}
               </select>
             </Field>
             <Field label="Sesiones por semana">
@@ -585,21 +613,51 @@ function StudentNoteForm({
   onClose: () => void;
   onDone: () => void;
 }) {
+  const [revision, setRevision] = useState(student.note_revision || 0);
+  const [resolving, setResolving] = useState(false);
+  const [conflict, setConflict] = useState<any>(null);
   return (
     <Modal title={`Nota de ${student.full_name}`} onClose={onClose}>
       <p className="muted">
         Una nota breve para el registro del estudiante. Se guarda directamente,
         sin aprobación.
       </p>
+      {conflict && (
+        <Alert>
+          Otra sesión guardó: {conflict.note || "Sin nota"}.
+          <button type="button" className="button" onClick={onDone}>
+            Conservar dato actual
+          </button>
+          <button
+            type="button"
+            className="button"
+            onClick={() => {
+              setRevision(conflict.revision);
+              setResolving(true);
+              setConflict(null);
+            }}
+          >
+            Reemplazar por mi cambio (pulsa Guardar nota)
+          </button>
+        </Alert>
+      )}
       <SubmitForm
         label="Guardar nota"
         onDone={onDone}
-        onSubmit={(f) =>
-          api(`/books/${data.book.id}/notes`, {
-            enrollment_id: student.id,
-            note: f.get("note") || "",
-          })
-        }
+        onSubmit={async (f) => {
+          try {
+            return await api(`/books/${data.book.id}/notes`, {
+              enrollment_id: student.id,
+              note: f.get("note") || "",
+              expected_revision: revision,
+              resolve_conflict: resolving,
+            });
+          } catch (error) {
+            if (error instanceof ApiError && error.code === "REVISION_CONFLICT")
+              setConflict(error.current);
+            throw error;
+          }
+        }}
       >
         <Field label="Nota breve">
           <textarea
@@ -674,6 +732,8 @@ function AttendanceGrid({
         state: "saving" | "saved" | "error";
         status: Mark | null;
         message?: string;
+        current?: { revision: number; status: Mark | null };
+        lesson?: Lesson;
       }
     >
   >({});
@@ -694,15 +754,25 @@ function AttendanceGrid({
       scroll.current.scrollLeft = target.offsetLeft - studentWidth;
     }
   }, [focusWeek]);
-  async function save(lesson: Lesson, status: Mark | null) {
+  const draft = useRef({});
+  useEffect(() => {
+    markDraft(
+      draft.current,
+      Object.values(saves).some((v) => v.state !== "saved"),
+    );
+    return () => markDraft(draft.current, false);
+  }, [saves]);
+  async function save(lesson: Lesson, status: Mark | null, resolving = false) {
     const key = `${lesson.enrollment_id}/${lesson.date}/${lesson.slot}`;
     setSaves((v) => ({ ...v, [key]: { state: "saving", status } }));
     try {
-      await api(`/books/${data.book.id}/attendance`, {
+      const result = await api(`/books/${data.book.id}/attendance`, {
         enrollment_id: lesson.enrollment_id,
         date: lesson.date,
         slot: lesson.slot,
         status,
+        expected_revision: lesson.revision || 0,
+        resolve_conflict: resolving,
       });
       setData((previous) =>
         previous
@@ -717,16 +787,15 @@ function AttendanceGrid({
                       a.slot === lesson.slot
                     ),
                 ),
-                ...(status
-                  ? [
-                      {
-                        enrollment_id: lesson.enrollment_id,
-                        date: lesson.date,
-                        slot: lesson.slot,
-                        status,
-                      },
-                    ]
-                  : []),
+                ...[
+                  {
+                    enrollment_id: lesson.enrollment_id,
+                    date: lesson.date,
+                    slot: lesson.slot,
+                    status,
+                    revision: result.revision,
+                  },
+                ],
               ],
             }
           : previous,
@@ -735,7 +804,16 @@ function AttendanceGrid({
     } catch (e) {
       setSaves((v) => ({
         ...v,
-        [key]: { state: "error", status, message: (e as Error).message },
+        [key]: {
+          state: "error",
+          status,
+          lesson,
+          message: (e as Error).message,
+          current:
+            e instanceof ApiError && e.code === "REVISION_CONFLICT"
+              ? e.current
+              : undefined,
+        },
       }));
     }
   }
@@ -816,6 +894,53 @@ function AttendanceGrid({
           </button>
         </div>
       </div>
+      {Object.entries(saves)
+        .filter(([, v]) => v.current)
+        .map(([key, v]) => (
+          <div className="alert" key={key}>
+            Otra sesión modificó la asistencia de{" "}
+            {
+              data.enrollments.find((e) => e.id === v.lesson?.enrollment_id)
+                ?.full_name
+            }
+            , {v.lesson?.date}. Actual:{" "}
+            {v.current!.status ? labels[v.current!.status] : "Pendiente"}.
+            <button
+              className="button"
+              onClick={() => {
+                void api<BookData>(`/books/${data.book.id}`)
+                  .then((d) => {
+                    setData(d);
+                    setSaves((prev) => ({
+                      ...prev,
+                      [key]: { ...v, state: "saved", current: undefined },
+                    }));
+                  })
+                  .catch((e) =>
+                    setSaves((prev) => ({
+                      ...prev,
+                      [key]: { ...v, message: e.message },
+                    })),
+                  );
+              }}
+            >
+              Conservar dato actual
+            </button>
+            <button
+              className="button"
+              onClick={() =>
+                void save(
+                  { ...v.lesson!, revision: v.current!.revision },
+                  v.status,
+                  true,
+                )
+              }
+            >
+              Reemplazar por mi cambio
+            </button>
+          </div>
+        ))}
+
       <div className="legend">
         {(
           ["present", "absent", "justified", "suspended", "pending"] as const
@@ -953,7 +1078,8 @@ function AttendanceGrid({
                                                   : lesson.status
                                               }
                                               disabled={
-                                                saveState?.state === "saving"
+                                                saveState?.state === "saving" ||
+                                                data.can_write === false
                                               }
                                               onChange={(event) =>
                                                 void save(
@@ -977,20 +1103,27 @@ function AttendanceGrid({
                                               </option>
                                             </select>
                                           </div>
-                                          {saveState?.state === "error" && (
-                                            <button
-                                              className="retry"
-                                              title={saveState.message}
-                                              onClick={() =>
-                                                void save(
-                                                  lesson,
-                                                  saveState.status,
-                                                )
-                                              }
-                                            >
-                                              Reintentar
-                                            </button>
-                                          )}
+                                          {saveState?.state === "error" &&
+                                            !saveState.current && (
+                                              <small role="alert">
+                                                {saveState.message}
+                                              </small>
+                                            )}
+                                          {saveState?.state === "error" &&
+                                            !saveState.current && (
+                                              <button
+                                                className="retry"
+                                                title={saveState.message}
+                                                onClick={() =>
+                                                  void save(
+                                                    saveState.lesson || lesson,
+                                                    saveState.status,
+                                                  )
+                                                }
+                                              >
+                                                Reintentar
+                                              </button>
+                                            )}
                                         </>
                                       )}
                                       <span className="cell-date">
@@ -1047,11 +1180,10 @@ function Reports({ data }: { data: BookData }) {
     setBusy(true);
     setError("");
     try {
-      const r = await fetch(
-        `/api/books/${data.book.id}/export?from=${from}&to=${to}`,
+      const blob = await apiBlob(
+        `/books/${data.book.id}/export?from=${from}&to=${to}`,
       );
-      if (!r.ok) throw new Error((await r.json()).error);
-      const href = URL.createObjectURL(await r.blob());
+      const href = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = href;
       a.download = "asistencia-cac.xlsx";
@@ -1215,8 +1347,14 @@ function BookView({
     const onFocus = () => {
       if (!studentModal && !scheduleModal && !bookProposal) void refresh();
     };
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === "visible") onFocus();
+    }, 30000);
     window.addEventListener("focus", onFocus);
-    return () => window.removeEventListener("focus", onFocus);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("focus", onFocus);
+    };
   }, [bookId, studentModal, scheduleModal, bookProposal]);
   async function done() {
     await refresh();
@@ -1233,7 +1371,12 @@ function BookView({
     return (
       <div className={embedded ? "admin-workspace-book" : "container"}>
         {!embedded && (
-          <button className="button" onClick={onBack}>
+          <button
+            className="button"
+            onClick={() => {
+              if (confirmLeave()) onBack();
+            }}
+          >
             <ArrowLeft /> Volver
           </button>
         )}
@@ -1264,9 +1407,20 @@ function BookView({
       }
     >
       {!embedded && (
-        <button className="back-link" onClick={onBack}>
+        <button
+          className="back-link"
+          onClick={() => {
+            if (confirmLeave()) onBack();
+          }}
+        >
           <ArrowLeft size={17} /> Todos los libros
         </button>
+      )}
+      {data.can_write === false && (
+        <Alert>
+          Libro archivado · Solo consulta. Administración debe restaurarlo para
+          modificarlo.
+        </Alert>
       )}
       <div className="book-title">
         <div className="book-title-icon">
@@ -1284,6 +1438,7 @@ function BookView({
         </div>
         <button
           className="button primary add-student"
+          disabled={data.can_write === false}
           onClick={() => setStudentModal("new")}
         >
           <Plus size={19} /> Agregar estudiante
@@ -1297,6 +1452,7 @@ function BookView({
               aria-selected={tab === key}
               key={key}
               onClick={() => {
+                if (!confirmLeave()) return;
                 setTab(key);
                 void refresh();
               }}
@@ -1328,7 +1484,7 @@ function BookView({
             onRefresh={refresh}
             version={requestVersion}
             onProposeBook={
-              access?.kind !== "admin"
+              access?.kind !== "admin" && data.can_write !== false
                 ? () =>
                     api<Catalog>("/catalog")
                       .then(setBookProposal)
@@ -1341,7 +1497,9 @@ function BookView({
           <AttendanceGrid
             data={data}
             setData={setData}
-            onNote={setNoteStudent}
+            onNote={(e) => {
+              if (data.can_write !== false) setNoteStudent(e);
+            }}
           />
         )}{" "}
         {tab === "reports" && <Reports data={data} />}{" "}
@@ -1414,6 +1572,7 @@ function BookView({
                     </div>
                     <button
                       className="button small"
+                      disabled={data.can_write === false}
                       onClick={() => setStudentModal(e)}
                     >
                       <Pencil size={16} />{" "}
@@ -1421,12 +1580,14 @@ function BookView({
                     </button>
                     <button
                       className="button small"
+                      disabled={data.can_write === false}
                       onClick={() => setNoteStudent(e)}
                     >
                       <Pencil size={15} /> Nota
                     </button>
                     <button
                       className="button small"
+                      disabled={data.can_write === false}
                       onClick={() => setScheduleModal(e)}
                     >
                       <Clock3 size={16} /> Horario
@@ -1487,7 +1648,11 @@ function BookView({
                     })
                     .sort((a, b) => a.s.time.localeCompare(b.s.time))
                     .map(({ e, s, key }) => (
-                      <button key={key} onClick={() => setScheduleModal(e)}>
+                      <button
+                        key={key}
+                        disabled={data.can_write === false}
+                        onClick={() => setScheduleModal(e)}
+                      >
                         <strong>{s.time}</strong>
                         <span>{e.full_name}</span>
                         <small>{data.book.duration_minutes} minutos</small>
@@ -1523,7 +1688,12 @@ function BookView({
         )}
       </section>
       {!embedded && access?.kind === "admin" && (
-        <button className="back-link" onClick={onAdmin}>
+        <button
+          className="back-link"
+          onClick={() => {
+            if (confirmLeave()) onAdmin();
+          }}
+        >
           <Settings size={16} /> Administrar este libro y sus suspensiones
         </button>
       )}
@@ -1643,6 +1813,7 @@ function AdminWorkspace({ catalog, mode }: { catalog: Catalog; mode: string }) {
           <select
             value={periodId}
             onChange={(e) => {
+              if (!confirmLeave()) return;
               setPeriodId(e.target.value);
               const p = catalog.periods.find((p) => p.id === e.target.value)!;
               setFrom(p.start_date);
@@ -1820,7 +1991,9 @@ function AdminWorkspace({ catalog, mode }: { catalog: Catalog; mode: string }) {
                 aria-selected={selectedId === b.id}
                 className={selectedId === b.id ? "selected" : ""}
                 key={b.id}
-                onClick={() => setSelected(b.id)}
+                onClick={() => {
+                  if (confirmLeave()) setSelected(b.id);
+                }}
               >
                 <strong>{b.discipline}</strong>
                 <small>{b.teacher_name}</small>
@@ -1886,7 +2059,12 @@ function Admin({
   }
   return (
     <main className="container admin-page">
-      <button className="back-link" onClick={onClose}>
+      <button
+        className="back-link"
+        onClick={() => {
+          if (confirmLeave()) onClose();
+        }}
+      >
         <ArrowLeft size={17} /> Volver a los libros
       </button>
       <div className="section-heading">
@@ -1912,12 +2090,14 @@ function Admin({
           ["teachers", "Profesores"],
           ["periods", "Períodos"],
           ["books", "Duración de clases"],
+          ["manage", "Editar y archivar"],
           ["passwords", "Contraseñas"],
         ].map(([key, label]) => (
           <button
             className={tab === key ? "selected" : ""}
             key={key}
             onClick={() => {
+              if (!confirmLeave()) return;
               setTab(key);
               setNotice("");
             }}
@@ -1934,6 +2114,7 @@ function Admin({
           </p>
         )}
         {error && <Alert>{error}</Alert>}
+        {tab === "manage" && <EntityManager catalog={catalog} save={save} />}
         {tab === "requests" && (
           <RequestList admin onRefresh={load} onReviewed={refresh} />
         )}
@@ -2327,7 +2508,14 @@ export default function App() {
     [selected, setSelected] = useState<Book | null>(null),
     [dialog, setDialog] = useState<Access["kind"] | null>(null),
     [create, setCreate] = useState(false),
-    [filter, setFilter] = useState("");
+    [filter, setFilter] = useState(""),
+    [showArchive, setShowArchive] = useState(false),
+    [reauth, setReauth] = useState<any>(null);
+  useEffect(() => {
+    const handler = (e: Event) => setReauth((e as CustomEvent).detail);
+    window.addEventListener("cac-auth-required", handler);
+    return () => window.removeEventListener("cac-auth-required", handler);
+  }, []);
   async function refresh() {
     const c = await api<Catalog>("/catalog");
     setCatalog(c);
@@ -2349,7 +2537,37 @@ export default function App() {
       })
       .catch((e) => setError(e.message));
   }, []);
+  const currentHash = useRef(window.location.hash);
+  useEffect(() => {
+    currentHash.current = window.location.hash;
+  }, [page, selected]);
+  useEffect(() => {
+    const navigate = () => {
+      if (!confirmLeave()) {
+        window.history.pushState(
+          null,
+          "",
+          currentHash.current || window.location.pathname,
+        );
+        return;
+      }
+      currentHash.current = window.location.hash;
+      const bookId = window.location.hash.startsWith("#book/")
+        ? window.location.hash.slice(6)
+        : null;
+      const book = catalog?.books.find((b) => b.id === bookId);
+      if (book) {
+        setSelected(book);
+        if (access?.kind === "admin" || access?.book_id === book.id)
+          setPage("book");
+        else setDialog("book");
+      } else setPage("home");
+    };
+    window.addEventListener("popstate", navigate);
+    return () => window.removeEventListener("popstate", navigate);
+  }, [catalog, access]);
   function openBook(b: Book) {
+    if (!confirmLeave()) return;
     setSelected(b);
     if (access?.kind === "admin" || access?.book_id === b.id) {
       setPage("book");
@@ -2368,6 +2586,7 @@ export default function App() {
     } else setCreate(true);
   }
   async function logout() {
+    if (!confirmLeave()) return;
     try {
       await api("/logout", {});
       setAccess(null);
@@ -2377,14 +2596,40 @@ export default function App() {
       setError((e as Error).message);
     }
   }
+  const visibleBooks =
+    catalog?.books.filter(
+      (b) => Boolean(b.archived_at || b.period_archived_at) === showArchive,
+    ) || [];
   return (
     <>
+      {reauth && (
+        <PasswordDialog
+          kind={access?.kind === "admin" ? "admin" : "book"}
+          book={selected || undefined}
+          onClose={() => {
+            reauth.reject(
+              new ApiError(
+                "Sesión vencida. Tu cambio sigue pendiente.",
+                401,
+                "SESSION_EXPIRED",
+              ),
+            );
+            setReauth(null);
+          }}
+          onLogin={(a) => {
+            setAccess(a);
+            reauth.resolve();
+            setReauth(null);
+          }}
+        />
+      )}
       <header className="topbar">
         <a
           href="#"
           className="brand"
           onClick={(e) => {
             e.preventDefault();
+            if (!confirmLeave()) return;
             setPage("home");
             window.location.hash = "";
             void refresh().catch((e) => setError(e.message));
@@ -2403,9 +2648,13 @@ export default function App() {
           )}
           <button
             className="admin-link"
-            onClick={() =>
-              access?.kind === "admin" ? setPage("admin") : setDialog("admin")
-            }
+            onClick={() => {
+              if (confirmLeave()) {
+                access?.kind === "admin"
+                  ? setPage("admin")
+                  : setDialog("admin");
+              }
+            }}
           >
             <Settings size={17} />
             <span>Administración</span>
@@ -2436,14 +2685,27 @@ export default function App() {
             <div className="library-heading">
               <div>
                 <h1>
-                  Libros de clases <span>{catalog.books.length}</span>
+                  {showArchive ? "Archivo de libros" : "Libros de clases"}{" "}
+                  <span>{visibleBooks.length}</span>
                 </h1>
                 <p>Elige tu libro para registrar la asistencia.</p>
               </div>
             </div>
             <div className="library-filters">
               <span className="filter-label">
-                <BookOpen size={17} /> Todos los libros
+                <BookOpen size={17} />{" "}
+                <button
+                  className={!showArchive ? "selected" : ""}
+                  onClick={() => setShowArchive(false)}
+                >
+                  Libros activos
+                </button>
+                <button
+                  className={showArchive ? "selected" : ""}
+                  onClick={() => setShowArchive(true)}
+                >
+                  Archivo
+                </button>
               </span>
               <div className="search-field">
                 <Search size={17} />
@@ -2456,7 +2718,7 @@ export default function App() {
               </div>
             </div>
             <div className="books-grid">
-              {catalog.books
+              {visibleBooks
                 .filter((b) =>
                   `${b.discipline} ${b.teacher_name}`
                     .toLocaleLowerCase("es")
@@ -2499,18 +2761,22 @@ export default function App() {
                   </button>
                 ))}
             </div>
-            {!catalog.books.length && (
+            {!visibleBooks.length && (
               <div className="empty-state">
                 <BookOpen size={34} />
-                <h3>No hay libros registrados</h3>
+                <h3>
+                  {showArchive
+                    ? "No hay libros archivados"
+                    : "No hay libros registrados"}
+                </h3>
                 <p>
                   Administración puede agregar profesores y períodos. Luego,
                   administración crea los libros de cada profesor.
                 </p>
               </div>
             )}
-            {catalog.books.length > 0 &&
-              !catalog.books.some((b) =>
+            {visibleBooks.length > 0 &&
+              !visibleBooks.some((b) =>
                 `${b.discipline} ${b.teacher_name}`
                   .toLocaleLowerCase("es")
                   .includes(filter.toLocaleLowerCase("es")),

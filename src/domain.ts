@@ -1,16 +1,20 @@
 export type Mark = "present" | "absent" | "justified";
 export type Status = Mark | "pending" | "suspended";
 export interface Teacher {
+  archived_at?: string | null;
   id: string;
   name: string;
 }
 export interface Period {
+  archived_at?: string | null;
   id: string;
   name: string;
   start_date: string;
   end_date: string;
 }
 export interface Book {
+  archived_at?: string | null;
+  period_archived_at?: string | null;
   id: string;
   teacher_id: string;
   period_id: string;
@@ -40,6 +44,7 @@ export interface Enrollment {
   joined_on: string;
   left_on: string | null;
   note?: string;
+  note_revision?: number;
 }
 export interface Suspension {
   id: string;
@@ -55,9 +60,11 @@ export interface SavedAttendance {
   enrollment_id: string;
   date: string;
   slot: number;
-  status: Mark;
+  status: Mark | null;
+  revision?: number;
 }
 export interface Lesson {
+  revision?: number;
   enrollment_id: string;
   date: string;
   slot: number;
@@ -67,6 +74,7 @@ export interface Lesson {
   underlying?: Mark;
 }
 export interface BookData {
+  can_write?: boolean;
   book: Book;
   period: Period;
   enrollments: Enrollment[];
@@ -135,6 +143,12 @@ export function lessonsFor(
       a.status,
     ]),
   );
+  const revisions = new Map(
+    data.attendance.map((a) => [
+      `${a.enrollment_id}/${a.date}/${a.slot}`,
+      a.revision || 0,
+    ]),
+  );
   const suspensions = data.suspensions.filter(
     (s) =>
       s.scope === "center" ||
@@ -167,12 +181,13 @@ export function lessonsFor(
           (s) => s.start_date <= date && s.end_date >= date,
         );
         result.push({
+          revision: revisions.get(`${e.id}/${date}/${index}`) || 0,
           enrollment_id: e.id,
           date,
           slot: index,
           time: s.time,
           status: affected.length ? "suspended" : mark || "pending",
-          underlying: mark,
+          underlying: mark || undefined,
           reason: affected.length
             ? [...new Set(affected.map((s) => s.reason))].join(" · ")
             : undefined,

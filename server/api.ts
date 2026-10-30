@@ -1,3 +1,4 @@
+import { administer } from "./administration";
 import { chileHolidays } from "./holidays";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
@@ -12,6 +13,7 @@ import {
   lockBook,
   requireAdmin,
   requireBook,
+  requireWritable,
   setAttendance,
   type Access,
 } from "./service";
@@ -78,9 +80,15 @@ export async function handleApi(
       .replace(/^\/\.netlify\/functions\/api/, "")
       .replace(/^\/api/, "") || "/";
   if (!["GET", "POST"].includes(req.method))
-    return json({ error: "Método no permitido." }, 405);
+    return json(
+      { error: "Método no permitido.", code: "METHOD_NOT_ALLOWED" },
+      405,
+    );
   if (req.method === "POST" && req.headers.get("origin") !== url.origin)
-    return json({ error: "Solicitud de origen no permitido." }, 403);
+    return json(
+      { error: "Solicitud de origen no permitido.", code: "FORBIDDEN" },
+      403,
+    );
   try {
     if (path === "/login" && req.method === "POST") {
       const input = z
@@ -123,6 +131,7 @@ export async function handleApi(
           {
             error:
               "Demasiados intentos. Espera 15 minutos antes de volver a intentar.",
+            code: "RATE_LIMITED",
           },
           429,
           { "Retry-After": "900" },
@@ -161,7 +170,10 @@ export async function handleApi(
         }
         if (!valid)
           return json(
-            { error: "Contraseña incorrecta. Vuelve a intentarlo." },
+            {
+              error: "Contraseña incorrecta. Vuelve a intentarlo.",
+              code: "AUTH_INVALID",
+            },
             401,
           );
         await c.query("DELETE FROM login_limits WHERE key_hash=$1", [
@@ -198,15 +210,17 @@ export async function handleApi(
       if (path === "/catalog" && req.method === "GET") {
         const books = (
           await c.query(
-            "SELECT b.id,b.teacher_id,b.period_id,b.discipline,b.sessions_per_week,b.duration_minutes,t.name AS teacher_name,p.name AS period_name,p.start_date::text,p.end_date::text FROM books b JOIN teachers t ON t.id=b.teacher_id JOIN periods p ON p.id=b.period_id ORDER BY p.start_date DESC,t.name,b.discipline",
+            "SELECT b.archived_at,p.archived_at AS period_archived_at,b.id,b.teacher_id,b.period_id,b.discipline,b.sessions_per_week,b.duration_minutes,t.name AS teacher_name,p.name AS period_name,p.start_date::text,p.end_date::text FROM books b JOIN teachers t ON t.id=b.teacher_id JOIN periods p ON p.id=b.period_id ORDER BY p.start_date DESC,t.name,b.discipline",
           )
         ).rows;
         const teachers = (
-          await c.query("SELECT id,name FROM teachers ORDER BY name")
+          await c.query(
+            "SELECT archived_at,id,name FROM teachers ORDER BY name",
+          )
         ).rows;
         const periods = (
           await c.query(
-            "SELECT id,name,start_date::text,end_date::text FROM periods ORDER BY start_date DESC",
+            "SELECT archived_at,id,name,start_date::text,end_date::text FROM periods ORDER BY start_date DESC",
           )
         ).rows;
         return json({
@@ -293,21 +307,44 @@ export async function handleApi(
           return json(visibleBook(await loadBook(c, bookId), access!));
         if (action === "notes" && req.method === "POST") {
           const input = z
-            .object({ enrollment_id: id, note: z.string().trim().max(500) })
+            .object({
+              enrollment_id: id,
+              note: z.string().trim().max(500),
+              expected_revision: z.number().int().nonnegative(),
+              resolve_conflict: z.boolean().optional(),
+            })
             .parse(await body(req));
           await lockBook(c, bookId);
           const data = visibleBook(await loadBook(c, bookId), access!);
-          if (!data.enrollments.some((e) => e.id === input.enrollment_id))
-            throw new HttpError(404, "Estudiante no encontrado.");
-          await c.query("UPDATE enrollments SET note=$1 WHERE id=$2", [
-            input.note,
-            input.enrollment_id,
-          ]);
-          await audit(c, access!, "enrollment.note", bookId, {
-            enrollment_id: input.enrollment_id,
-            note: input.note,
-          });
-          return json({ ok: true });
+          requireWritable(data);
+          const student = data.enrollments.find(
+            (e) => e.id === input.enrollment_id,
+          );
+          if (!student) throw new HttpError(404, "Estudiante no encontrado.");
+          if (student.note_revision !== input.expected_revision)
+            throw new HttpError(
+              409,
+              "Otra sesión modificó esta nota.",
+              "REVISION_CONFLICT",
+              { revision: student.note_revision, note: student.note },
+            );
+          await c.query(
+            "UPDATE enrollments SET note=$1,note_revision=note_revision+1 WHERE id=$2",
+            [input.note, input.enrollment_id],
+          );
+          await audit(
+            c,
+            access!,
+            input.resolve_conflict
+              ? "note.conflict_resolved"
+              : "enrollment.note",
+            bookId,
+            {
+              enrollment_id: input.enrollment_id,
+              note: input.note,
+            },
+          );
+          return json({ ok: true, revision: input.expected_revision + 1 });
         }
         if (action === "attendance" && req.method === "POST") {
           const input = z
@@ -316,10 +353,11 @@ export async function handleApi(
               date,
               slot: z.number().int().min(0).max(6),
               status: z.enum(["present", "absent", "justified"]).nullable(),
+              expected_revision: z.number().int().nonnegative(),
+              resolve_conflict: z.boolean().optional(),
             })
             .parse(await body(req));
-          await setAttendance(c, access!, bookId, input);
-          return json({ ok: true });
+          return json(await setAttendance(c, access!, bookId, input));
         }
         if (
           (action === "students" || action === "schedule") &&
@@ -481,8 +519,24 @@ export async function handleApi(
             "holiday-exception",
             "password",
             "duration",
+            "edit-teacher",
+            "edit-period",
+            "edit-book",
+            "archive",
           ])
           .parse(raw.action);
+        if (
+          [
+            "duration",
+            "edit-teacher",
+            "edit-period",
+            "edit-book",
+            "archive",
+          ].includes(action)
+        ) {
+          await administer(c, access, raw);
+          return json({ ok: true });
+        }
         if (action === "holiday-exception") {
           const input = z
             .object({ date, classes_enabled: z.boolean() })
@@ -593,20 +647,6 @@ export async function handleApi(
           if (!removed) throw new HttpError(404, "Suspensión no encontrada.");
           await audit(c, access, "suspension.remove", null, removed);
         }
-        if (action === "duration") {
-          const input = z
-            .object({
-              book_id: id,
-              duration_minutes: z.number().int().min(5).max(480),
-            })
-            .parse(raw);
-          await lockBook(c, input.book_id);
-          await c.query("UPDATE books SET duration_minutes=$1 WHERE id=$2", [
-            input.duration_minutes,
-            input.book_id,
-          ]);
-          await audit(c, access, "book.duration", input.book_id, input);
-        }
         if (action === "password") {
           const input = z
             .object({
@@ -649,24 +689,41 @@ export async function handleApi(
       return json(
         {
           error: error.issues[0]?.message || "Revisa los datos del formulario.",
+          code: "VALIDATION_ERROR",
         },
         400,
       );
     if (error instanceof HttpError)
-      return json({ error: error.message }, error.status);
+      return json(
+        { error: error.message, code: error.code, current: error.current },
+        error.status,
+      );
     const code = (error as { code?: string }).code;
     if (code === "23503")
       return json(
-        { error: "El profesor o período seleccionado ya no está disponible." },
+        {
+          error: "El profesor o período seleccionado ya no está disponible.",
+          code: "REFERENCE_CONFLICT",
+        },
         409,
       );
     if (code === "23505")
-      return json({ error: "Este registro ya existe." }, 409);
-    console.error("CAC API error", { code: code || "internal", path });
+      return json(
+        { error: "Este registro ya existe.", code: "DUPLICATE" },
+        409,
+      );
+    const errorId = randomUUID();
+    console.error("CAC API error", {
+      errorId,
+      code: code || "internal",
+      route: path.replace(/[0-9a-f]{8}-[0-9a-f-]{27,}/gi, ":id"),
+    });
     return json(
       {
         error:
-          "No se pudo completar la operación. Tus cambios no se confirmaron; vuelve a intentarlo.",
+          "No se pudo completar la operación. Vuelve a intentarlo o consulta el dato actual.",
+        code: "SERVER_ERROR",
+        error_id: errorId,
       },
       503,
     );

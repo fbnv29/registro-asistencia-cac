@@ -15,7 +15,10 @@
     "db:migrate": "tsx scripts/migrate.ts",
     "db:seed": "tsx scripts/seed.ts",
     "db:passwords": "tsx scripts/passwords.ts",
-    "format": "prettier --write src server scripts tests netlify *.json *.ts *.html README.md"
+    "format": "prettier --write src server scripts tests netlify *.json *.ts *.html README.md",
+    "db:backup": "tsx scripts/backup.ts backup",
+    "db:restore:test": "tsx scripts/backup.ts restore",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "@fontsource/libre-baskerville": "^5.3.0",
@@ -31,6 +34,7 @@
   },
   "devDependencies": {
     "@netlify/functions": "^6.0.3",
+    "@playwright/test": "^1.64.1",
     "@types/node": "^22.0.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",

@@ -9,6 +9,7 @@ import {
   lockBook,
   visibleBook,
   requireAdmin,
+  requireWritable,
   type Access,
 } from "./service";
 import { lessonsFor, scheduleConflict } from "../src/domain";
@@ -35,6 +36,7 @@ export async function applyBookChange(
     if (access!.kind !== "admin" && input.left_on != null) requireAdmin(access);
     await lockBook(c, bookId);
     const data = visibleBook(await loadBook(c, bookId), access!);
+    requireWritable(data);
     if (
       input.joined_on < data.period.start_date ||
       input.joined_on > data.period.end_date ||
@@ -165,6 +167,7 @@ export async function applyBookChange(
       .parse(raw);
     await lockBook(c, bookId);
     const data = visibleBook(await loadBook(c, bookId), access!);
+    requireWritable(data);
     const e = data.enrollments.find((e) => e.id === input.enrollment_id);
     if (!e) throw new HttpError(404, "Estudiante no encontrado.");
     if (
@@ -238,6 +241,14 @@ export async function createBook(
         : { password }),
     })
     .parse(raw);
+  const target = (
+    await c.query(
+      "SELECT t.archived_at AS teacher_archived,p.archived_at AS period_archived FROM teachers t CROSS JOIN periods p WHERE t.id=$1 AND p.id=$2 FOR SHARE",
+      [input.teacher_id, input.period_id],
+    )
+  ).rows[0];
+  if (!target || target.teacher_archived || target.period_archived)
+    throw new HttpError(409, "Selecciona un profesor y período activos.");
   const bookId = randomUUID();
   await c.query(
     "INSERT INTO books(id,teacher_id,period_id,discipline,sessions_per_week,password_hash) VALUES($1,$2,$3,$4,$5,$6)",

@@ -143,3 +143,50 @@ Las altas, cambios de horario y reactivaciones validan las sesiones fechadas con
 Los feriados nacionales de Chile se generan por año con `date-holidays`, sin llamadas externas durante el uso. Se corrige su regla de Pascua para incluir Viernes y Sábado Santo, según el [calendario oficial 2026](https://www.gob.cl/noticias/feriados-2026-revisa-cuantos-habra-y-cuales-son-irrenunciables/). Los feriados regionales, vacaciones y cierres especiales se ingresan como suspensiones administrativas. Las reglas deben revisarse al actualizar la dependencia o ante feriados extraordinarios.
 
 La tabla de suspensiones distingue cierres manuales y feriados automáticos. Administración puede habilitar clases en un feriado y restaurarlo después; esa excepción solo desactiva el feriado automático, no otras suspensiones superpuestas. Los feriados se excluyen de porcentajes y exportaciones igual que las demás suspensiones y conservan las marcas anteriores. La tabla de profesores muestra las disciplinas/libros y sus períodos.
+
+## Cierre del piloto: archivo, revisiones y recuperación
+
+La migración `004_archive_and_revisions.sql` conserva los datos y agrega archivo de entidades y revisiones. Los libros anteriores comienzan activos. Las asistencias existentes parten en revisión 1; las sesiones sin marcas y las notas comienzan en 0. Volver una asistencia a pendiente conserva su revisión en `lessons`.
+
+Administración dispone de **Editar y archivar** para corregir profesores, períodos y libros, y para archivar/restaurar sin borrar. Los cambios de fechas se rechazan si dejan matrículas, horarios o asistencias fuera del período. Disciplina y profesor se pueden corregir; el período del libro y las sesiones semanales se conservan. Cambiar la duración valida cruces parciales, sesiones contiguas y medianoche contra el calendario completo, antes de guardar.
+
+Archivar un profesor lo excluye de nuevas asignaciones; sus libros siguen funcionando. Archivar un libro o período bloquea cambios de asistencia, notas, matrículas, horarios, duración y aprobación de solicitudes, también para administración. Las solicitudes se conservan y pueden rechazarse. Restaurar vuelve a permitir escritura siempre que el período y el libro estén activos. La portada separa **Libros activos** y **Archivo**; los profesores conservan acceso protegido de consulta y exportación, con las restricciones anteriores de alumnos retirados.
+
+### Contratos de API
+
+- `POST /api/admin`: nuevas acciones `edit-teacher` (`id`, `name`), `edit-period` (`id`, `name`, `start_date`, `end_date`), `edit-book` (`id`, `discipline`, `teacher_id`), `archive` (`entity`: `teacher|period|book`, `id`, `archived`: boolean). Requieren administración. La acción `duration` ahora comprueba conflictos antes de modificar el libro.
+- Los catálogos incorporan `archived_at` y `period_archived_at` para libros; la lectura del libro incluye `can_write`, `note_revision` en matrículas y `revision` en registros de asistencia, incluidos los pendientes materializados.
+- Asistencia y notas exigen `expected_revision`. Un conflicto devuelve HTTP 409, `code: REVISION_CONFLICT` y `current` con revisión y dato vigente. El cliente permite conservar el dato o reenviar la intención con la revisión leída; no existe sobrescritura forzada. `resolve_conflict: true` identifica en la bitácora una resolución explícita, sujeta a la misma validación.
+- Sesión vencida: HTTP 401 / `SESSION_EXPIRED`; permisos: HTTP 403 / `FORBIDDEN`; archivo: HTTP 409 / `ARCHIVED`; validación: `VALIDATION_ERROR`. Los fallos internos incluyen un `error_id` y el registro técnico contiene solo identificador, ruta sin UUID y código, sin fichas ni credenciales.
+
+La pantalla actualiza al recuperar foco y cada 30 segundos mientras está visible. Los intentos fallidos se conservan en memoria con su revisión original; no se escriben fichas ni borradores en almacenamiento del navegador. El reingreso conserva el cambio y vuelve a validar permisos y revisión. Se advierte antes de cerrar, recargar o cambiar de sección con cambios pendientes. Cerrar definitivamente el navegador descarta los borradores: no hay modo de trabajo sin conexión.
+
+### Respaldar y comprobar recuperación
+
+Se requieren las utilidades oficiales PostgreSQL `pg_dump` y `pg_restore` compatibles con el servidor. Se buscan en `PG_BIN`, en `/opt/homebrew/opt/libpq/bin` si existe, o en PATH. La conexión es siempre directa. Los archivos se crean con permisos privados y están excluidos de Git; no deben subirse a repositorios ni adjuntarse a incidencias.
+
+```sh
+npm run db:backup -- /ruta/privada/cac.dump
+# Definir CAC_RESTORE_DATABASE_URL en el entorno, nunca en un comando compartido.
+# Debe apuntar a una base VACÍA cac_restore_check_* creada en la rama de desarrollo.
+npm run db:restore:test -- /ruta/privada/cac.dump
+```
+
+El script de restauración exige `APP_ENV=development|preview`, el mismo servidor que la conexión de desarrollo y una base distinta cuyo nombre comienza por `cac_restore_check_`. No borra objetos existentes ni ejecuta `--clean`; restaura en una sola transacción y se detiene al fallar. Comparar después migraciones, filas relevantes y un recorrido de acceso/consulta. Retener temporalmente el destino para revisión y eliminarlo cuando ya no se necesite.
+
+Se comprobó respaldo y restauración en `cac_restore_check_20261029`, únicamente en la rama de desarrollo, verificando las cuatro migraciones y registros de libros, matrículas, sesiones y asistencias. Este ensayo no configura una política automática de respaldos de producción.
+
+### Verificación local y publicación pendiente
+
+```sh
+npm test
+npm run build
+RUN_INTEGRATION=true npm run test:integration
+# Con npm run dev activo en otro terminal y Chromium instalado:
+npx playwright install chromium
+npm run test:e2e
+```
+
+Las pruebas de navegador crean y limpian sus propios registros ficticios. Cubren propuesta/aprobación, notas, asistencia persistente, desconexión y reintento, conflicto entre clientes, sesión vencida, archivo, consulta/exportación y navegación por teclado en 390 px. No se ejecutan con datos de producción ni se despliega desde estas pruebas.
+
+Antes de publicar: aplicar migraciones a la base de destino, configurar variables del servidor y contraseñas definitivas mediante `db:passwords` y el panel, confirmar separación entre producción y vistas previas, verificar cookies Secure/HttpOnly en HTTPS, guardado/recarga/exportación en Netlify y configurar retención y recuperación de respaldos según los servicios contratados. `123456` se mantiene solo en el entorno local de este piloto. Validar facilidad de uso con profesores reales durante el piloto.

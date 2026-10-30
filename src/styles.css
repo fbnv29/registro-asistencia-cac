@@ -2812,3 +2812,45 @@ h1 em {
     max-width: 135px;
   }
 }
+.entity-editor {
+  padding: 1rem;
+  background: var(--paper, #f6f7f9);
+  border: 1px solid #d4d9de;
+  margin-bottom: 1.5rem;
+  display: grid;
+  gap: 0.8rem;
+  max-width: 42rem;
+}
+.entity-editor label {
+  display: grid;
+  gap: 0.3rem;
+  font-weight: 600;
+}
+.entity-editor input,
+.entity-editor select {
+  width: 100%;
+  padding: 0.7rem;
+  border: 1px solid #cbd2d6;
+  border-radius: 6px;
+  font: inherit;
+}
+.plain-table td .button {
+  margin: 0.2rem;
+}
+.filter-label button {
+  background: transparent;
+  border: 0;
+  font: inherit;
+  color: inherit;
+  padding: 0.5rem;
+  cursor: pointer;
+}
+.filter-label button.selected {
+  font-weight: 700;
+  border-bottom: 2px solid #00627e;
+}
+.attendance-footer .alert {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}

@@ -113,3 +113,11 @@ it("valida solo la matrícula modificada y la vigencia del horario propuesto", (
   expect(scheduleConflict(data, "b", "2026-07-01")).not.toBe(null);
   expect(scheduleConflict(data, "b", "2026-12-01")).toBe(null);
 });
+
+it("rechaza clases que terminan después de medianoche y permite terminar a las 00:00", () => {
+  const data = fixture();
+  data.schedules[0].slots[0].time = "23:30";
+  expect(scheduleConflict(data, "a")?.message).toContain("medianoche");
+  data.schedules[0].slots[0].time = "23:15";
+  expect(scheduleConflict(data, "a")).toBe(null);
+});

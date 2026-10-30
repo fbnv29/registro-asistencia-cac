@@ -31,6 +31,26 @@ async function call(
     /^\/books\/[^/]+\/(students|schedule)$/.test(path)
   )
     path = "/admin" + path;
+  // Legacy scenarios use the latest revision; dedicated conflict tests supply it explicitly.
+  if (
+    payload &&
+    /\/books\/[^/]+\/(attendance|notes)$/.test(path) &&
+    !("expected_revision" in (payload as any))
+  ) {
+    const book = path.split("/")[2];
+    const data = await (await call(`/books/${book}`, undefined, cookie)).json();
+    const value = payload as any;
+    const revision = path.endsWith("/notes")
+      ? data.enrollments?.find((e: any) => e.id === value.enrollment_id)
+          ?.note_revision
+      : data.attendance?.find(
+          (a: any) =>
+            a.enrollment_id === value.enrollment_id &&
+            a.date === value.date &&
+            a.slot === value.slot,
+        )?.revision;
+    payload = { ...value, expected_revision: revision || 0 };
+  }
   return handleApi(
     new Request("https://cac.test/api" + path, {
       method: payload === undefined ? "GET" : "POST",
@@ -155,7 +175,7 @@ describeIntegration(
         ).status,
       ).toBe(401);
       expect((await call(`/books/${bookIds[0]}`, undefined, "")).status).toBe(
-        403,
+        401,
       );
       expect((await call(`/books/${bookIds[1]}`)).status).toBe(403);
       expect((await call("/admin")).status).toBe(403);
@@ -707,6 +727,322 @@ describeIntegration(
         ).status,
       ).toBe(409);
     });
+    it("detecta revisiones obsoletas incluso después de volver a pendiente", async () => {
+      const path = `/books/${bookIds[0]}/attendance`;
+      const value = {
+        enrollment_id: enrollmentId,
+        date: "2026-03-02",
+        slot: 0,
+        status: "present",
+      };
+      const data = await (await call(`/books/${bookIds[0]}`)).json();
+      const revision =
+        data.attendance.find(
+          (a: any) => a.enrollment_id === enrollmentId && a.date === value.date,
+        )?.revision || 0;
+      const first = await call(path, { ...value, expected_revision: revision });
+      expect(first.status).toBe(200);
+      const stale = await call(path, {
+        ...value,
+        status: "absent",
+        expected_revision: revision,
+      });
+      expect(stale.status).toBe(409);
+      expect((await stale.json()).code).toBe("REVISION_CONFLICT");
+      const cleared = await call(path, {
+        ...value,
+        status: null,
+        expected_revision: revision + 1,
+      });
+      expect(cleared.status).toBe(200);
+      const repeated = await call(path, {
+        ...value,
+        expected_revision: revision + 1,
+      });
+      expect(repeated.status).toBe(409);
+      const missing = await handleApi(
+        new Request(`https://cac.test/api${path}`, {
+          method: "POST",
+          headers: {
+            Origin: "https://cac.test",
+            "Content-Type": "application/json",
+            Cookie: bookCookie,
+          },
+          body: JSON.stringify(value),
+        }),
+        ip,
+      );
+      expect(missing.status).toBe(400);
+      const notePath = `/books/${bookIds[0]}/notes`;
+      const student = (
+        await (await call(`/books/${bookIds[0]}`)).json()
+      ).enrollments.find((e: any) => e.id === enrollmentId);
+      expect(
+        (
+          await call(notePath, {
+            enrollment_id: enrollmentId,
+            note: "Nueva nota",
+            expected_revision: student.note_revision,
+          })
+        ).status,
+      ).toBe(200);
+      const conflict = await call(notePath, {
+        enrollment_id: enrollmentId,
+        note: "Texto obsoleto",
+        expected_revision: student.note_revision,
+      });
+      expect(conflict.status).toBe(409);
+      expect((await conflict.json()).current.note).toBe("Nueva nota");
+    });
+    it("archiva sin borrar y bloquea escritura y aprobación hasta restaurar", async () => {
+      const proposal = await call(`/books/${bookIds[0]}/requests`, {
+        kind: "student.update",
+        data: {
+          enrollment_id: enrollmentId,
+          full_name: "Nombre después de restaurar",
+          joined_on: "2026-03-01",
+        },
+      });
+      expect(proposal.status).toBe(202);
+      const request = (await proposal.json()).id;
+      expect(
+        (
+          await call(
+            "/admin",
+            {
+              action: "archive",
+              entity: "period",
+              id: periodId,
+              archived: true,
+            },
+            adminCookie,
+          )
+        ).status,
+      ).toBe(200);
+      const data = await (await call(`/books/${bookIds[0]}`)).json();
+      expect(data.can_write).toBe(false);
+      expect(
+        (
+          await call(
+            `/books/${bookIds[0]}/notes`,
+            { enrollment_id: enrollmentId, note: "No permitido" },
+            adminCookie,
+          )
+        ).status,
+      ).toBe(409);
+      expect((await call(`/books/${bookIds[0]}/requests`)).status).toBe(200);
+      expect(
+        (
+          await call(
+            `/admin/requests/${request}`,
+            { decision: "approve", note: "" },
+            adminCookie,
+          )
+        ).status,
+      ).toBe(409);
+      expect(
+        (
+          await call(
+            `/books/${bookIds[0]}/export?from=2026-03-01&to=2026-03-31`,
+          )
+        ).status,
+      ).toBe(200);
+      expect(
+        (
+          await call(
+            "/admin",
+            {
+              action: "archive",
+              entity: "period",
+              id: periodId,
+              archived: false,
+            },
+            adminCookie,
+          )
+        ).status,
+      ).toBe(200);
+      expect(
+        (
+          await call(
+            `/admin/requests/${request}`,
+            { decision: "approve", note: "" },
+            adminCookie,
+          )
+        ).status,
+      ).toBe(200);
+      expect(
+        (
+          await call(
+            "/admin",
+            {
+              action: "archive",
+              entity: "book",
+              id: bookIds[0],
+              archived: true,
+            },
+            adminCookie,
+          )
+        ).status,
+      ).toBe(200);
+      expect(
+        (
+          await (
+            await call(`/books/${bookIds[1]}`, undefined, adminCookie)
+          ).json()
+        ).can_write,
+      ).toBe(true);
+      expect(
+        (
+          await call(
+            "/admin",
+            {
+              action: "archive",
+              entity: "book",
+              id: bookIds[0],
+              archived: false,
+            },
+            adminCookie,
+          )
+        ).status,
+      ).toBe(200);
+      expect(
+        (
+          await call(
+            "/admin",
+            {
+              action: "archive",
+              entity: "teacher",
+              id: teacherId,
+              archived: true,
+            },
+            adminCookie,
+          )
+        ).status,
+      ).toBe(200);
+      expect(
+        (await (await call(`/books/${bookIds[0]}`)).json()).can_write,
+      ).toBe(true);
+      expect(
+        (
+          await call(
+            "/books",
+            {
+              teacher_id: teacherId,
+              period_id: periodId,
+              discipline: "No crear",
+              sessions_per_week: 1,
+              password: "123456",
+            },
+            adminCookie,
+          )
+        ).status,
+      ).toBe(409);
+      expect(
+        (
+          await call(
+            "/admin",
+            {
+              action: "archive",
+              entity: "teacher",
+              id: teacherId,
+              archived: false,
+            },
+            adminCookie,
+          )
+        ).status,
+      ).toBe(200);
+    });
+    it("edita entidades y valida límites del período y duración sin cambios parciales", async () => {
+      expect(
+        (
+          await call(
+            "/admin",
+            {
+              action: "edit-teacher",
+              id: teacherId,
+              name: "Profesor corregido",
+            },
+            adminCookie,
+          )
+        ).status,
+      ).toBe(200);
+      expect(
+        (
+          await call(
+            "/admin",
+            {
+              action: "edit-book",
+              id: bookIds[0],
+              discipline: "Disciplina corregida",
+              teacher_id: teacherId,
+            },
+            adminCookie,
+          )
+        ).status,
+      ).toBe(200);
+      expect(
+        (
+          await call(
+            "/admin",
+            {
+              action: "edit-period",
+              id: periodId,
+              name: "Período corregido",
+              start_date: "2026-03-02",
+              end_date: "2026-11-30",
+            },
+            adminCookie,
+          )
+        ).status,
+      ).toBe(409);
+      expect(
+        (
+          await call(
+            "/admin",
+            {
+              action: "edit-period",
+              id: periodId,
+              name: "Período corregido",
+              start_date: "2026-03-01",
+              end_date: "2026-11-30",
+            },
+            adminCookie,
+          )
+        ).status,
+      ).toBe(200);
+      const addition = await call(
+        `/books/${bookIds[0]}/students`,
+        {
+          full_name: "Horario contiguo",
+          joined_on: "2026-03-01",
+          slots: [{ day: 0, time: "15:45" }],
+        },
+        adminCookie,
+      );
+      expect(addition.status).toBe(201);
+      expect(
+        (
+          await call(
+            "/admin",
+            { action: "duration", book_id: bookIds[0], duration_minutes: 60 },
+            adminCookie,
+          )
+        ).status,
+      ).toBe(409);
+      expect(
+        (await (await call(`/books/${bookIds[0]}`)).json()).book
+          .duration_minutes,
+      ).toBe(45);
+      expect(
+        (
+          await call(
+            "/admin",
+            { action: "duration", book_id: bookIds[0], duration_minutes: 45 },
+            adminCookie,
+          )
+        ).status,
+      ).toBe(200);
+    });
     it("limita intentos y restablece contraseñas de libro revocando sesiones", async () => {
       for (let i = 0; i < 15; i++)
         await call(
@@ -737,7 +1073,7 @@ describeIntegration(
           )
         ).status,
       ).toBe(200);
-      expect((await call(`/books/${bookIds[0]}`)).status).toBe(403);
+      expect((await call(`/books/${bookIds[0]}`)).status).toBe(401);
       const r = await call(
         "/login",
         { kind: "book", book_id: bookIds[0], password: "nuevo-password" },
@@ -764,7 +1100,7 @@ describeIntegration(
     it("cierra la sesión y revoca el acceso al recargar", async () => {
       expect((await call("/logout", {})).status).toBe(200);
       expect(await (await call("/session")).json()).toBe(null);
-      expect((await call(`/books/${bookIds[0]}`)).status).toBe(403);
+      expect((await call(`/books/${bookIds[0]}`)).status).toBe(401);
     });
   },
 );

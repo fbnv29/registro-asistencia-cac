@@ -10,6 +10,7 @@ import {
   lockBook,
   requireBook,
   requireAdmin,
+  requireWritable,
   visibleBook,
   type Access,
 } from "./service";
@@ -49,11 +50,18 @@ function baseline(data: BookData, payload: any) {
       period_id: data.book.period_id,
       sessions_per_week: data.book.sessions_per_week,
     },
-    period: data.period,
+    period: {
+      id: data.period.id,
+      name: data.period.name,
+      start_date: data.period.start_date,
+      end_date: data.period.end_date,
+    },
     ...(enrollment
       ? {
           enrollment: Object.fromEntries(
-            Object.entries(enrollment).filter(([key]) => key !== "note"),
+            Object.entries(enrollment).filter(
+              ([key]) => key !== "note" && key !== "note_revision",
+            ),
           ),
           schedules: data.schedules
             .filter((s) => s.enrollment_id === enrollment.id)
@@ -95,6 +103,7 @@ export async function proposeChange(
   requireBook(access, bookId);
   await lockBook(c, bookId);
   const data = visibleBook(await loadBook(c, bookId), access);
+  requireWritable(data);
   let payload: any;
   if (kind === "book.create") {
     const parsed = bookSchema.parse(raw);
@@ -195,6 +204,7 @@ export async function reviewRequest(
   let result: unknown = null;
   if (input.decision === "approve") {
     const data = await loadBook(c, request.book_id);
+    requireWritable(data);
     const current = baseline(data, request.payload);
     // PostgreSQL jsonb does not preserve object-key order, so compare values, not JSON strings.
     const matches = (
