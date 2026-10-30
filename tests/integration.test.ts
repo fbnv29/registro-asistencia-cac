@@ -17,7 +17,20 @@ let adminCookie = "",
   bookCookie = "";
 const createdSuspensions: string[] = [];
 const createdEnrollments: string[] = [];
-async function call(path: string, payload?: unknown, cookie = bookCookie) {
+async function call(
+  path: string,
+  payload?: unknown,
+  cookie = bookCookie,
+  panel = true,
+) {
+  // Administrative fixture edits use the privileged panel routes.
+  if (
+    panel &&
+    cookie === adminCookie &&
+    payload !== undefined &&
+    /^\/books\/[^/]+\/(students|schedule)$/.test(path)
+  )
+    path = "/admin" + path;
   return handleApi(
     new Request("https://cac.test/api" + path, {
       method: payload === undefined ? "GET" : "POST",
@@ -581,6 +594,118 @@ describeIntegration(
           )
         ).status,
       ).toBe(200);
+    });
+    it("deja pendientes los cambios hechos desde el libro incluso con sesión administrativa y guarda notas sin aprobación", async () => {
+      const before: BookData = await (
+        await call(`/books/${bookIds[0]}`, undefined, adminCookie)
+      ).json();
+      const original = before.enrollments.find((e) => e.id === enrollmentId)!;
+      const proposal = await call(
+        `/books/${bookIds[0]}/students`,
+        {
+          enrollment_id: enrollmentId,
+          full_name: "Cambio desde el libro",
+          joined_on: original.joined_on,
+        },
+        adminCookie,
+        false,
+      );
+      expect(proposal.status).toBe(202);
+      const request = await proposal.json();
+      expect(
+        (
+          await (
+            await call(`/books/${bookIds[0]}`, undefined, adminCookie)
+          ).json()
+        ).enrollments.find((e: any) => e.id === enrollmentId).full_name,
+      ).toBe(original.full_name);
+      expect(
+        (
+          await call(`/books/${bookIds[0]}/notes`, {
+            enrollment_id: enrollmentId,
+            note: "Le gusta la música rock.",
+          })
+        ).status,
+      ).toBe(200);
+      expect(
+        (
+          await call(`/admin/books/${bookIds[0]}/students`, {
+            enrollment_id: enrollmentId,
+            full_name: "No autorizado",
+            joined_on: original.joined_on,
+          })
+        ).status,
+      ).toBe(403);
+      expect(
+        (
+          await call(
+            `/admin/requests/${request.id}`,
+            { decision: "approve", note: "" },
+            adminCookie,
+          )
+        ).status,
+      ).toBe(200);
+      const after: BookData = await (await call(`/books/${bookIds[0]}`)).json();
+      expect(
+        after.enrollments.find((e) => e.id === enrollmentId),
+      ).toMatchObject({
+        full_name: "Cambio desde el libro",
+        note: "Le gusta la música rock.",
+      });
+      expect(
+        (
+          await call(`/books/${bookIds[0]}/notes`, {
+            enrollment_id: enrollmentId,
+            note: "x".repeat(501),
+          })
+        ).status,
+      ).toBe(400);
+    });
+    it("bloquea altas y propuestas con horario ocupado y aplica feriados nacionales automáticamente", async () => {
+      const input = {
+        full_name: "Horario ocupado",
+        joined_on: "2026-03-01",
+        slots: [{ day: 0, time: "15:00" }],
+      };
+      expect((await call(`/books/${bookIds[0]}/students`, input)).status).toBe(
+        409,
+      );
+      expect(
+        (await call(`/books/${bookIds[0]}/students`, input, adminCookie))
+          .status,
+      ).toBe(409);
+      const data: BookData = await (await call(`/books/${bookIds[0]}`)).json();
+      expect(
+        data.suspensions.some(
+          (s) => s.source === "holiday" && s.start_date === "2026-05-01",
+        ),
+      ).toBe(true);
+      const created = await call(
+        `/books/${bookIds[0]}/students`,
+        {
+          full_name: "Sesión en feriado",
+          joined_on: "2026-05-01",
+          left_on: "2026-05-01",
+          slots: [{ day: 4, time: "18:00" }],
+        },
+        adminCookie,
+      );
+      expect(created.status).toBe(201);
+      const e = (await created.json()).id;
+      expect(
+        (
+          await call(
+            `/books/${bookIds[0]}/attendance`,
+            {
+              enrollment_id: e,
+              date: "2026-05-01",
+              slot: 0,
+              status: "present",
+            },
+            adminCookie,
+          )
+        ).status,
+      ).toBe(409);
     });
     it("limita intentos y restablece contraseñas de libro revocando sesiones", async () => {
       for (let i = 0; i < 15; i++)

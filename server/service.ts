@@ -1,3 +1,4 @@
+import { holidaysBetween } from "./holidays";
 import type { PoolClient } from "@neondatabase/serverless";
 import type { BookData, Lesson } from "../src/domain";
 import { lessonsFor, isRetired } from "../src/domain";
@@ -57,7 +58,7 @@ export async function loadBook(
   ).rows[0];
   const enrollments = (
     await c.query(
-      "SELECT e.id,e.student_id,e.book_id,s.full_name,e.joined_on::text,e.left_on::text FROM enrollments e JOIN students s ON s.id=e.student_id WHERE book_id=$1 ORDER BY s.full_name",
+      "SELECT e.id,e.student_id,e.book_id,s.full_name,e.joined_on::text,e.left_on::text,e.note FROM enrollments e JOIN students s ON s.id=e.student_id WHERE book_id=$1 ORDER BY s.full_name",
       [bookId],
     )
   ).rows;
@@ -79,6 +80,14 @@ export async function loadBook(
       [bookId],
     )
   ).rows;
+  const exceptions = new Set<string>(
+    (await c.query("SELECT date::text FROM holiday_exceptions")).rows.map(
+      (r) => r.date,
+    ),
+  );
+  suspensions.push(
+    ...holidaysBetween(period.start_date, period.end_date, exceptions),
+  );
   return { book, period, enrollments, schedules, suspensions, attendance };
 }
 export async function lockBook(c: PoolClient, id: string) {
@@ -162,7 +171,7 @@ export async function loadAdminBooks(c: PoolClient): Promise<BookData[]> {
   ).rows;
   const enrollments = (
     await c.query(
-      "SELECT e.id,e.student_id,e.book_id,s.full_name,e.joined_on::text,e.left_on::text FROM enrollments e JOIN students s ON s.id=e.student_id ORDER BY s.full_name",
+      "SELECT e.id,e.student_id,e.book_id,s.full_name,e.joined_on::text,e.left_on::text,e.note FROM enrollments e JOIN students s ON s.id=e.student_id ORDER BY s.full_name",
     )
   ).rows;
   const schedules = (
@@ -180,6 +189,11 @@ export async function loadAdminBooks(c: PoolClient): Promise<BookData[]> {
       "SELECT id,scope,target_id,start_date::text,end_date::text,reason FROM suspensions",
     )
   ).rows;
+  const exceptions = new Set<string>(
+    (await c.query("SELECT date::text FROM holiday_exceptions")).rows.map(
+      (r) => r.date,
+    ),
+  );
   return books.map((book) => {
     const members = enrollments.filter((e) => e.book_id === book.id);
     const ids = new Set(members.map((e) => e.id));
@@ -189,12 +203,19 @@ export async function loadAdminBooks(c: PoolClient): Promise<BookData[]> {
       enrollments: members,
       schedules: schedules.filter((s) => ids.has(s.enrollment_id)),
       attendance: attendance.filter((a) => ids.has(a.enrollment_id)),
-      suspensions: suspensions.filter(
-        (s) =>
-          s.scope === "center" ||
-          (s.scope === "teacher" && s.target_id === book.teacher_id) ||
-          (s.scope === "book" && s.target_id === book.id),
-      ),
+      suspensions: [
+        ...holidaysBetween(
+          periods.find((p) => p.id === book.period_id).start_date,
+          periods.find((p) => p.id === book.period_id).end_date,
+          exceptions,
+        ),
+        ...suspensions.filter(
+          (s) =>
+            s.scope === "center" ||
+            (s.scope === "teacher" && s.target_id === book.teacher_id) ||
+            (s.scope === "book" && s.target_id === book.id),
+        ),
+      ],
     };
   });
 }

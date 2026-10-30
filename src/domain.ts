@@ -39,6 +39,7 @@ export interface Enrollment {
   full_name: string;
   joined_on: string;
   left_on: string | null;
+  note?: string;
 }
 export interface Suspension {
   id: string;
@@ -47,6 +48,8 @@ export interface Suspension {
   start_date: string;
   end_date: string;
   reason: string;
+  source?: "manual" | "holiday";
+  active?: boolean;
 }
 export interface SavedAttendance {
   enrollment_id: string;
@@ -221,4 +224,52 @@ export function vacantSlots(data: BookData, on = localToday()): Slot[] {
     .flatMap(scheduled)
     .filter((s) => !occupied.has(`${s.day}/${s.time}`));
   return [...new Map(free.map((s) => [`${s.day}/${s.time}`, s])).values()];
+}
+
+/** Find a real dated overlap involving the changed enrollment; pre-existing overlaps do not block unrelated edits. */
+export function scheduleConflict(
+  data: BookData,
+  targetId: string,
+  from = data.period.start_date,
+) {
+  const byDate = new Map<string, Lesson[]>();
+  for (const lesson of lessonsFor(data, from)) {
+    byDate.set(lesson.date, [...(byDate.get(lesson.date) || []), lesson]);
+  }
+  const minutes = (time: string) =>
+    Number(time.slice(0, 2)) * 60 + Number(time.slice(3, 5));
+  for (const [date, lessons] of byDate) {
+    for (const lesson of lessons.filter((l) => l.enrollment_id === targetId)) {
+      const start = minutes(lesson.time),
+        end = start + data.book.duration_minutes;
+      if (end > 1440)
+        return {
+          date,
+          time: lesson.time,
+          name: "fin del día",
+          message: "La clase no puede terminar después de medianoche.",
+        };
+      const collision = lessons.find(
+        (other) =>
+          !(
+            other.enrollment_id === lesson.enrollment_id &&
+            other.slot === lesson.slot
+          ) &&
+          start < minutes(other.time) + data.book.duration_minutes &&
+          minutes(other.time) < end,
+      );
+      if (collision) {
+        const student = data.enrollments.find(
+          (e) => e.id === collision.enrollment_id,
+        );
+        return {
+          date,
+          time: collision.time,
+          name: student?.full_name || "otra sesión",
+          message: `Ya existe un evento en ese horario: ${shortDate(date)}, ${collision.time}, ${student?.full_name || "otra sesión"}. Revisa la duración y elige un horario disponible.`,
+        };
+      }
+    }
+  }
+  return null;
 }

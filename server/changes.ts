@@ -11,7 +11,7 @@ import {
   requireAdmin,
   type Access,
 } from "./service";
-import { lessonsFor } from "../src/domain";
+import { lessonsFor, scheduleConflict } from "../src/domain";
 import { hashPassword } from "./security";
 export async function applyBookChange(
   c: PoolClient,
@@ -54,6 +54,19 @@ export async function applyBookChange(
           400,
           "La fecha de ingreso se conserva para proteger el historial.",
         );
+      if (
+        e.left_on &&
+        (input.left_on === null || (input.left_on && input.left_on > e.left_on))
+      ) {
+        const candidate = {
+          ...data,
+          enrollments: data.enrollments.map((row) =>
+            row.id === e.id ? { ...row, left_on: input.left_on || null } : row,
+          ),
+        };
+        const conflict = scheduleConflict(candidate, e.id, e.left_on);
+        if (conflict) throw new HttpError(409, conflict.message);
+      }
       await c.query("UPDATE students SET full_name=$1 WHERE id=$2", [
         input.full_name,
         e.student_id,
@@ -78,6 +91,34 @@ export async function applyBookChange(
         400,
         "Completa el horario de todas las sesiones semanales.",
       );
+    const proposedEnrollmentId = randomUUID();
+    const conflict = scheduleConflict(
+      {
+        ...data,
+        enrollments: [
+          ...data.enrollments,
+          {
+            id: proposedEnrollmentId,
+            student_id: "new",
+            book_id: bookId,
+            full_name: input.full_name,
+            joined_on: input.joined_on,
+            left_on: input.left_on || null,
+          },
+        ],
+        schedules: [
+          ...data.schedules,
+          {
+            id: "proposed",
+            enrollment_id: proposedEnrollmentId,
+            effective_from: input.joined_on,
+            slots: input.slots,
+          },
+        ],
+      },
+      proposedEnrollmentId,
+    );
+    if (conflict) throw new HttpError(409, conflict.message);
     let studentId = input.student_id;
     if (studentId) {
       // Only admin may reuse records across books. Book access may reuse its own existing student IDs.
@@ -149,6 +190,8 @@ export async function applyBookChange(
         { id: randomUUID(), ...input },
       ],
     };
+    const conflict = scheduleConflict(candidate, e.id, input.effective_from);
+    if (conflict) throw new HttpError(409, conflict.message);
     const proposed = lessonsFor(candidate, input.effective_from);
     if (
       data.attendance.some(

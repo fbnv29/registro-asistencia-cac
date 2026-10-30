@@ -73,8 +73,8 @@ Las fechas se manejan como fechas locales; la semana actual usa `America/Santiag
 | `GET /session`, `POST /login`, `POST /logout`         | Acceso y sesión                                                                |
 | `POST /books`                                         | Crear libro exclusivamente con acceso administrativo                           |
 | `GET /books/:id`                                      | Matrículas, horarios, asistencia y suspensiones del libro autorizado           |
-| `POST /books/:id/students`                            | Crear matrícula o actualizar nombre/retiro                                     |
-| `POST /books/:id/schedule`                            | Horario con fecha de vigencia                                                  |
+| `POST /books/:id/students`                            | Proponer matrícula o actualización; respuesta 202                              |
+| `POST /books/:id/schedule`                            | Proponer horario con fecha de vigencia; respuesta 202                          |
 | `POST /books/:id/attendance`                          | Marcar o devolver a pendiente una sesión                                       |
 | `GET /books/:id/export?from=AAAA-MM-DD&to=AAAA-MM-DD` | Descargar Excel autorizado                                                     |
 | `GET /admin`, `POST /admin`                           | Gestión administrativa                                                         |
@@ -125,9 +125,21 @@ La migración `002_change_requests.sql` agrega la bandeja y los estados. El cód
 
 - `GET /api/books/:id/requests`: solicitudes del libro autorizado.
 - `POST /api/books/:id/requests`: propuesta de estudiante, ficha/retiro, horario o libro; respuesta 202.
-- Las rutas existentes de modificación de estudiantes y horarios también devuelven 202 y crean una solicitud cuando el acceso es de profesor.
+- Las rutas existentes de modificación de estudiantes y horarios también devuelven 202 y crean una solicitud también con una sesión administrativa cuando se usan desde el libro.
 - `GET /api/admin/requests`: bandeja e historial administrativos.
 - `POST /api/admin/requests/:id`: decisión `approve` o `reject`, con observación opcional.
 - `POST /api/books`: creación administrativa directa; un acceso de profesor o la antigua credencial de creación reciben 403.
 
 Los profesores solo pueden proponer cambios en el libro al que tienen acceso y libros nuevos para el profesor asociado a él. El historial administrativo de estudiantes retirados sigue restringido a administración. Las pruebas de integración verifican propuestas sin aplicación prematura, aprobación, rechazo, conflictos, deduplicación, permisos y contraseñas protegidas.
+
+## Notas, horarios y calendario automático
+
+El botón Crear libro se encuentra exclusivamente en Administración. Dentro de un libro, las modificaciones de estudiantes y horarios siempre quedan pendientes de aprobación, incluso con una sesión administrativa. Las ediciones directas se realizan desde las secciones administrativas mediante `POST /api/admin/books/:id/students` y `POST /api/admin/books/:id/schedule`.
+
+La asistencia y las notas breves por estudiante se guardan directamente. `POST /api/books/:id/notes` permite una nota de hasta 500 caracteres y registra el cambio en la bitácora. Cambiar una nota no invalida una propuesta pendiente sobre la ficha. La migración `003_student_notes_and_holiday_exceptions.sql` agrega estas notas y las excepciones del calendario.
+
+Las altas, cambios de horario y reactivaciones validan las sesiones fechadas contra las del mismo libro, considerando duración, matrícula y vigencias. Se rechazan tanto coincidencias exactas como cruces parciales, también al aprobar una propuesta. Los horarios contiguos se permiten. Los horarios históricos coincidentes anteriores a esta validación se conservan.
+
+Los feriados nacionales de Chile se generan por año con `date-holidays`, sin llamadas externas durante el uso. Se corrige su regla de Pascua para incluir Viernes y Sábado Santo, según el [calendario oficial 2026](https://www.gob.cl/noticias/feriados-2026-revisa-cuantos-habra-y-cuales-son-irrenunciables/). Los feriados regionales, vacaciones y cierres especiales se ingresan como suspensiones administrativas. Las reglas deben revisarse al actualizar la dependencia o ante feriados extraordinarios.
+
+La tabla de suspensiones distingue cierres manuales y feriados automáticos. Administración puede habilitar clases en un feriado y restaurarlo después; esa excepción solo desactiva el feriado automático, no otras suspensiones superpuestas. Los feriados se excluyen de porcentajes y exportaciones igual que las demás suspensiones y conservan las marcas anteriores. La tabla de profesores muestra las disciplinas/libros y sus períodos.

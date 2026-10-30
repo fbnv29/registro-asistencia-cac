@@ -1,3 +1,4 @@
+import { chileHolidays } from "./holidays";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { transaction } from "./db";
@@ -224,6 +225,24 @@ export async function handleApi(
         requireAdmin(access);
         return json(await createBook(c, access, await body(req)), 201);
       }
+      const adminBookPath = path.match(
+        /^\/admin\/books\/([a-f0-9-]+)\/(students|schedule)$/,
+      );
+      if (adminBookPath && req.method === "POST") {
+        requireAdmin(access);
+        const raw = await body(req);
+        const action = adminBookPath[2] as "students" | "schedule";
+        return json(
+          await applyBookChange(
+            c,
+            access,
+            id.parse(adminBookPath[1]),
+            action,
+            raw,
+          ),
+          action === "students" && !raw?.enrollment_id ? 201 : 200,
+        );
+      }
       const requestPath = path.match(/^\/books\/([a-f0-9-]+)\/requests$/);
       if (requestPath) {
         const bookId = id.parse(requestPath[1]);
@@ -264,7 +283,7 @@ export async function handleApi(
         );
       }
       const bookPath = path.match(
-        /^\/books\/([a-f0-9-]+)(?:\/(students|schedule|attendance|export))?$/,
+        /^\/books\/([a-f0-9-]+)(?:\/(students|schedule|attendance|export|notes))?$/,
       );
       if (bookPath) {
         const bookId = id.parse(bookPath[1]),
@@ -272,6 +291,24 @@ export async function handleApi(
         requireBook(access, bookId);
         if (!action && req.method === "GET")
           return json(visibleBook(await loadBook(c, bookId), access!));
+        if (action === "notes" && req.method === "POST") {
+          const input = z
+            .object({ enrollment_id: id, note: z.string().trim().max(500) })
+            .parse(await body(req));
+          await lockBook(c, bookId);
+          const data = visibleBook(await loadBook(c, bookId), access!);
+          if (!data.enrollments.some((e) => e.id === input.enrollment_id))
+            throw new HttpError(404, "Estudiante no encontrado.");
+          await c.query("UPDATE enrollments SET note=$1 WHERE id=$2", [
+            input.note,
+            input.enrollment_id,
+          ]);
+          await audit(c, access!, "enrollment.note", bookId, {
+            enrollment_id: input.enrollment_id,
+            note: input.note,
+          });
+          return json({ ok: true });
+        }
         if (action === "attendance" && req.method === "POST") {
           const input = z
             .object({
@@ -289,11 +326,6 @@ export async function handleApi(
           req.method === "POST"
         ) {
           const raw = await body(req);
-          if (access!.kind === "admin")
-            return json(
-              await applyBookChange(c, access!, bookId, action, raw),
-              action === "students" && !raw?.enrollment_id ? 201 : 200,
-            );
           const kind =
             action === "schedule"
               ? "schedule.update"
@@ -400,6 +432,17 @@ export async function handleApi(
       }
       if (path === "/admin" && req.method === "GET") {
         requireAdmin(access);
+        const year = z.coerce
+          .number()
+          .int()
+          .min(2000)
+          .max(2100)
+          .parse(url.searchParams.get("year") || new Date().getUTCFullYear());
+        const excluded = new Set<string>(
+          (await c.query("SELECT date::text FROM holiday_exceptions")).rows.map(
+            (r) => r.date,
+          ),
+        );
         return json({
           pending_count: Number(
             (
@@ -408,11 +451,17 @@ export async function handleApi(
               )
             ).rows[0].count,
           ),
-          suspensions: (
-            await c.query(
-              "SELECT id,scope,target_id,start_date::text,end_date::text,reason FROM suspensions ORDER BY start_date DESC",
-            )
-          ).rows,
+          suspensions: [
+            ...(
+              await c.query(
+                "SELECT id,scope,target_id,start_date::text,end_date::text,reason FROM suspensions ORDER BY start_date DESC",
+              )
+            ).rows.map((s) => ({ ...s, source: "manual", active: true })),
+            ...chileHolidays(year).map((h) => ({
+              ...h,
+              active: !excluded.has(h.start_date),
+            })),
+          ].sort((a, b) => a.start_date.localeCompare(b.start_date)),
           students: (
             await c.query(
               "SELECT id,full_name FROM students ORDER BY full_name",
@@ -429,10 +478,36 @@ export async function handleApi(
             "period",
             "suspension",
             "remove-suspension",
+            "holiday-exception",
             "password",
             "duration",
           ])
           .parse(raw.action);
+        if (action === "holiday-exception") {
+          const input = z
+            .object({ date, classes_enabled: z.boolean() })
+            .parse(raw);
+          if (
+            !chileHolidays(Number(input.date.slice(0, 4))).some(
+              (h) => h.start_date === input.date,
+            )
+          )
+            throw new HttpError(
+              400,
+              "Esta fecha no corresponde a un feriado nacional del calendario.",
+            );
+          await c.query("SELECT id FROM books ORDER BY id FOR UPDATE");
+          if (input.classes_enabled)
+            await c.query(
+              "INSERT INTO holiday_exceptions(date) VALUES($1) ON CONFLICT DO NOTHING",
+              [input.date],
+            );
+          else
+            await c.query("DELETE FROM holiday_exceptions WHERE date=$1", [
+              input.date,
+            ]);
+          await audit(c, access, "holiday.exception", null, input);
+        }
         if (action === "teacher") {
           const input = z.object({ name }).parse(raw);
           const teacherId = randomUUID();

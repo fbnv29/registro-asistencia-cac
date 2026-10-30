@@ -420,7 +420,9 @@ function StudentForm({
               : {}),
           };
           return api(
-            `/books/${data.book.id}/${propose ? "requests" : "students"}`,
+            propose
+              ? `/books/${data.book.id}/requests`
+              : `/admin/books/${data.book.id}/students`,
             propose
               ? {
                   kind: student ? "student.update" : "student.create",
@@ -536,7 +538,9 @@ function ScheduleForm({
             slots: readSlots(f, data.book.sessions_per_week),
           };
           return api(
-            `/books/${data.book.id}/${propose ? "requests" : "schedule"}`,
+            propose
+              ? `/books/${data.book.id}/requests`
+              : `/admin/books/${data.book.id}/schedule`,
             propose ? { kind: "schedule.update", data: input } : input,
           );
         }}
@@ -566,6 +570,49 @@ function ScheduleForm({
             versions.at(-1)?.slots
           }
         />
+      </SubmitForm>
+    </Modal>
+  );
+}
+function StudentNoteForm({
+  data,
+  student,
+  onClose,
+  onDone,
+}: {
+  data: BookData;
+  student: Enrollment;
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  return (
+    <Modal title={`Nota de ${student.full_name}`} onClose={onClose}>
+      <p className="muted">
+        Una nota breve para el registro del estudiante. Se guarda directamente,
+        sin aprobación.
+      </p>
+      <SubmitForm
+        label="Guardar nota"
+        onDone={onDone}
+        onSubmit={(f) =>
+          api(`/books/${data.book.id}/notes`, {
+            enrollment_id: student.id,
+            note: f.get("note") || "",
+          })
+        }
+      >
+        <Field label="Nota breve">
+          <textarea
+            name="note"
+            rows={4}
+            maxLength={500}
+            defaultValue={student.note || ""}
+            placeholder="Por ejemplo: le gusta la música rock."
+          />
+        </Field>
+        <p className="hint">
+          Hasta 500 caracteres. Deja el campo vacío para quitar la nota.
+        </p>
       </SubmitForm>
     </Modal>
   );
@@ -602,8 +649,10 @@ function AttendanceSymbol({ status }: { status: Status }) {
 function AttendanceGrid({
   data,
   setData,
+  onNote,
 }: {
   data: BookData;
+  onNote: (student: Enrollment) => void;
   setData: React.Dispatch<React.SetStateAction<BookData | null>>;
 }) {
   const scroll = useRef<HTMLDivElement>(null);
@@ -828,6 +877,19 @@ function AttendanceGrid({
                   <th scope="row" className="student-column">
                     <span className="student-name">
                       {e.full_name}
+                      <button
+                        className="student-note-button"
+                        aria-label={`Nota de ${e.full_name}`}
+                        title={e.note || "Agregar una nota breve"}
+                        onClick={() => onNote(e)}
+                      >
+                        <Pencil size={13} />
+                      </button>
+                      {e.note && (
+                        <small className="student-note-preview" title={e.note}>
+                          {e.note}
+                        </small>
+                      )}
                       {e.left_on && (
                         <small>Retiro: {shortDate(e.left_on)}</small>
                       )}
@@ -1129,7 +1191,8 @@ function BookView({
     [scheduleDate, setScheduleDate] = useState(localToday()),
     [proposalNotice, setProposalNotice] = useState(""),
     [requestVersion, setRequestVersion] = useState(0),
-    [bookProposal, setBookProposal] = useState<Catalog | null>(null);
+    [bookProposal, setBookProposal] = useState<Catalog | null>(null),
+    [noteStudent, setNoteStudent] = useState<Enrollment | null>(null);
   const refresh = (recenter = false) =>
     api<BookData>(`/books/${bookId}`)
       .then((d) => {
@@ -1159,7 +1222,7 @@ function BookView({
     await refresh();
     setStudentModal(null);
     setScheduleModal(null);
-    if (access?.kind !== "admin") {
+    if (!embedded) {
       setProposalNotice(
         "Solicitud enviada a administración. El cambio aparecerá cuando sea aprobado.",
       );
@@ -1275,7 +1338,11 @@ function BookView({
           />
         )}
         {tab === "attendance" && (
-          <AttendanceGrid data={data} setData={setData} />
+          <AttendanceGrid
+            data={data}
+            setData={setData}
+            onNote={setNoteStudent}
+          />
         )}{" "}
         {tab === "reports" && <Reports data={data} />}{" "}
         {tab === "students" && (
@@ -1334,6 +1401,9 @@ function BookView({
                     <span className="avatar">{e.full_name[0]}</span>
                     <div>
                       <strong>{e.full_name}</strong>
+                      {e.note && (
+                        <small className="student-note-preview">{e.note}</small>
+                      )}
                       {isRetired(e) && (
                         <span className="retired-badge">Retirado</span>
                       )}
@@ -1348,6 +1418,12 @@ function BookView({
                     >
                       <Pencil size={16} />{" "}
                       {access?.kind === "admin" ? "Editar / retiro" : "Editar"}
+                    </button>
+                    <button
+                      className="button small"
+                      onClick={() => setNoteStudent(e)}
+                    >
+                      <Pencil size={15} /> Nota
                     </button>
                     <button
                       className="button small"
@@ -1455,7 +1531,7 @@ function BookView({
         <StudentForm
           data={data}
           canRetire={true}
-          propose={access?.kind !== "admin"}
+          propose={!embedded}
           student={studentModal === "new" ? undefined : studentModal}
           onClose={() => setStudentModal(null)}
           onDone={() => void done()}
@@ -1465,9 +1541,20 @@ function BookView({
         <ScheduleForm
           data={data}
           student={scheduleModal}
-          propose={access?.kind !== "admin"}
+          propose={!embedded}
           onClose={() => setScheduleModal(null)}
           onDone={() => void done()}
+        />
+      )}
+      {noteStudent && (
+        <StudentNoteForm
+          data={data}
+          student={noteStudent}
+          onClose={() => setNoteStudent(null)}
+          onDone={() => {
+            setNoteStudent(null);
+            void refresh();
+          }}
         />
       )}
       {bookProposal && (
@@ -1765,8 +1852,10 @@ function Admin({
   catalog,
   refresh,
   onClose,
+  onCreateBook,
 }: {
   catalog: Catalog;
+  onCreateBook: () => void;
   refresh: () => Promise<void>;
   onClose: () => void;
 }) {
@@ -1776,9 +1865,10 @@ function Admin({
     [error, setError] = useState(""),
     [notice, setNotice] = useState(""),
     [scope, setScope] = useState("center"),
-    [passwordKind, setPasswordKind] = useState("book");
+    [passwordKind, setPasswordKind] = useState("book"),
+    [holidayYear, setHolidayYear] = useState(Number(localToday().slice(0, 4)));
   const load = () =>
-    api("/admin")
+    api(`/admin?year=${holidayYear}`)
       .then((v) => {
         setSuspensions(v.suspensions);
         setPendingCount(v.pending_count || 0);
@@ -1786,7 +1876,7 @@ function Admin({
       .catch((e) => setError(e.message));
   useEffect(() => {
     void load();
-  }, []);
+  }, [holidayYear]);
   async function save(value: unknown) {
     setNotice("");
     await api("/admin", value);
@@ -1805,7 +1895,12 @@ function Admin({
           <h1>Administración</h1>
           <p>Profesores, períodos lectivos y suspensiones.</p>
         </div>
-        <ShieldCheck size={40} />
+        <div className="admin-heading-actions">
+          <button className="button primary" onClick={onCreateBook}>
+            <Plus size={17} /> Crear libro
+          </button>
+          <ShieldCheck size={32} />
+        </div>
       </div>
       <div className="book-tabs">
         {[
@@ -1859,11 +1954,42 @@ function Admin({
                 <input name="name" required maxLength={120} />
               </Field>
             </SubmitForm>
-            <ul className="simple-list">
-              {catalog.teachers.map((t) => (
-                <li key={t.id}>{t.name}</li>
-              ))}
-            </ul>
+            <div className="table-scroll admin-data-table">
+              <table className="plain-table">
+                <thead>
+                  <tr>
+                    <th>Profesor</th>
+                    <th>Disciplinas / libros</th>
+                    <th>Total de libros</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {catalog.teachers.map((t) => {
+                    const books = catalog.books.filter(
+                      (b) => b.teacher_id === t.id,
+                    );
+                    return (
+                      <tr key={t.id}>
+                        <th>{t.name}</th>
+                        <td>
+                          {books.length ? (
+                            books.map((book) => (
+                              <div className="teacher-discipline" key={book.id}>
+                                <strong>{book.discipline}</strong>
+                                <small>{book.period_name}</small>
+                              </div>
+                            ))
+                          ) : (
+                            <span className="muted">Sin libros asignados</span>
+                          )}
+                        </td>
+                        <td>{books.length}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
           </>
         )}
         {tab === "periods" && (
@@ -1986,45 +2112,115 @@ function Admin({
                 />
               </Field>
             </SubmitForm>
-            <h3>Suspensiones registradas</h3>
-            <ul className="simple-list">
-              {suspensions.map((s) => (
-                <li key={s.id}>
-                  <div>
-                    <strong>{s.reason}</strong>
-                    <small>
-                      {s.start_date} — {s.end_date}
-                      <br />
-                      {s.scope === "center"
-                        ? "Todo el CAC"
-                        : s.scope === "teacher"
-                          ? catalog.teachers.find((t) => t.id === s.target_id)
-                              ?.name
-                          : catalog.books.find((b) => b.id === s.target_id)
-                              ?.discipline}
-                    </small>
-                  </div>
-                  <button
-                    className="button small"
-                    onClick={async () => {
-                      if (
-                        !confirm(
-                          "¿Quitar esta suspensión? Las marcas de asistencia anteriores volverán a contar.",
-                        )
-                      )
-                        return;
-                      try {
-                        await save({ action: "remove-suspension", id: s.id });
-                      } catch (e) {
-                        setError((e as Error).message);
-                      }
-                    }}
-                  >
-                    Quitar
-                  </button>
-                </li>
-              ))}
-            </ul>
+            <div className="suspension-table-heading">
+              <div>
+                <h3>Suspensiones registradas</h3>
+                <p className="hint">
+                  Los feriados nacionales se aplican automáticamente cada año.
+                  Las vacaciones y cierres especiales se registran arriba.
+                  Habilitar clases desactiva solo el feriado, no otras
+                  suspensiones.
+                </p>
+              </div>
+              <Field label="Año">
+                <input
+                  type="number"
+                  min={2000}
+                  max={2100}
+                  value={holidayYear}
+                  onChange={(e) => {
+                    const year = Number(e.target.value);
+                    if (year >= 2000 && year <= 2100) setHolidayYear(year);
+                  }}
+                />
+              </Field>
+            </div>
+            <div className="table-scroll admin-data-table">
+              <table className="plain-table suspension-table">
+                <thead>
+                  <tr>
+                    <th>Desde</th>
+                    <th>Hasta</th>
+                    <th>Motivo</th>
+                    <th>Afecta a</th>
+                    <th>Origen / estado</th>
+                    <th>Acción</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {suspensions
+                    .filter(
+                      (s) =>
+                        s.end_date >= `${holidayYear}-01-01` &&
+                        s.start_date <= `${holidayYear}-12-31`,
+                    )
+                    .map((s) => (
+                      <tr key={s.id}>
+                        <td>{shortDate(s.start_date)}</td>
+                        <td>{shortDate(s.end_date)}</td>
+                        <th>{s.reason}</th>
+                        <td>
+                          {s.scope === "center"
+                            ? "Todo el CAC"
+                            : s.scope === "teacher"
+                              ? catalog.teachers.find(
+                                  (t) => t.id === s.target_id,
+                                )?.name
+                              : catalog.books.find((b) => b.id === s.target_id)
+                                  ?.discipline}
+                        </td>
+                        <td>
+                          <span
+                            className={`calendar-badge ${s.source === "holiday" ? "automatic" : ""}`}
+                          >
+                            {s.source === "holiday" ? "Automático" : "Manual"}
+                          </span>
+                          {s.active === false && (
+                            <small className="holiday-enabled">
+                              Clases habilitadas
+                            </small>
+                          )}
+                        </td>
+                        <td>
+                          <button
+                            className="button small"
+                            onClick={async () => {
+                              try {
+                                if (s.source === "holiday") {
+                                  await save({
+                                    action: "holiday-exception",
+                                    date: s.start_date,
+                                    classes_enabled: s.active !== false,
+                                  });
+                                } else {
+                                  if (
+                                    !confirm(
+                                      "¿Quitar esta suspensión? Las marcas anteriores volverán a contar.",
+                                    )
+                                  )
+                                    return;
+                                  await save({
+                                    action: "remove-suspension",
+                                    id: s.id,
+                                  });
+                                }
+                              } catch (e) {
+                                setError((e as Error).message);
+                              }
+                            }}
+                          >
+                            {s.source === "holiday"
+                              ? s.active === false
+                                ? "Restaurar feriado"
+                                : "Habilitar clases"
+                              : "Quitar"}
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                </tbody>
+              </table>
+            </div>
           </>
         )}
         {tab === "books" && (
@@ -2131,7 +2327,6 @@ export default function App() {
     [selected, setSelected] = useState<Book | null>(null),
     [dialog, setDialog] = useState<Access["kind"] | null>(null),
     [create, setCreate] = useState(false),
-    [createAfterLogin, setCreateAfterLogin] = useState(false),
     [filter, setFilter] = useState("");
   async function refresh() {
     const c = await api<Catalog>("/catalog");
@@ -2169,10 +2364,7 @@ export default function App() {
       setPage("book");
       window.location.hash = `book/${selected!.id}`;
     } else if (requested === "admin") {
-      if (createAfterLogin) {
-        setCreate(true);
-        setCreateAfterLogin(false);
-      } else setPage("admin");
+      setPage("admin");
     } else setCreate(true);
   }
   async function logout() {
@@ -2248,16 +2440,6 @@ export default function App() {
                 </h1>
                 <p>Elige tu libro para registrar la asistencia.</p>
               </div>
-              <button
-                className="button primary"
-                onClick={() =>
-                  access?.kind === "admin"
-                    ? setCreate(true)
-                    : (setCreateAfterLogin(true), setDialog("admin"))
-                }
-              >
-                <Plus size={19} /> Crear un libro
-              </button>
             </div>
             <div className="library-filters">
               <span className="filter-label">
@@ -2356,6 +2538,7 @@ export default function App() {
       {catalog && page === "admin" && access?.kind === "admin" && (
         <Admin
           catalog={catalog}
+          onCreateBook={() => setCreate(true)}
           refresh={refresh}
           onClose={() => setPage("home")}
         />
@@ -2370,7 +2553,6 @@ export default function App() {
           book={selected || undefined}
           onClose={() => {
             setDialog(null);
-            setCreateAfterLogin(false);
           }}
           onLogin={onLogin}
         />

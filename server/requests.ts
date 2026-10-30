@@ -52,7 +52,9 @@ function baseline(data: BookData, payload: any) {
     period: data.period,
     ...(enrollment
       ? {
-          enrollment,
+          enrollment: Object.fromEntries(
+            Object.entries(enrollment).filter(([key]) => key !== "note"),
+          ),
           schedules: data.schedules
             .filter((s) => s.enrollment_id === enrollment.id)
             .sort((a, b) => a.effective_from.localeCompare(b.effective_from)),
