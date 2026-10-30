@@ -279,7 +279,10 @@ test("edición, archivo y restauración desde administración; protección al vo
     .getByRole("button", { name: "Editar y archivar", exact: true })
     .click();
   const original = `Piloto ${book.slice(0, 8)}`;
-  const originalRow = page.getByRole("row").filter({ hasText: original });
+  const booksSection = page
+    .getByRole("heading", { name: "Libros", exact: true })
+    .locator("..");
+  const originalRow = booksSection.getByRole("row").filter({ hasText: original });
   // Restore the archived fixture before editing.
   page.once("dialog", (dialog) => dialog.accept());
   await originalRow
@@ -296,7 +299,7 @@ test("edición, archivo y restauración desde administración; protección al vo
   await page
     .getByRole("button", { name: "Guardar cambios", exact: true })
     .click();
-  const row = page.getByRole("row").filter({ hasText: renamed });
+  const row = booksSection.getByRole("row").filter({ hasText: renamed });
   await expect(row).toBeVisible();
   page.once("dialog", (dialog) => dialog.accept());
   await row.getByRole("button", { name: "Archivar", exact: true }).click();
