@@ -104,9 +104,9 @@ GitHub Actions ejecuta las pruebas sin conexión a datos y la compilación en pu
 
 ## Publicación futura en Netlify
 
-La configuración está en `netlify.toml`: construcción `npm run build`, salida `dist`, API en `netlify/functions/api.ts`. La ruta `/api/*` se redirige a la función y el resto a la aplicación.
+La preparación completa está en [docs/NETLIFY.md](docs/NETLIFY.md). Ejecutar `npm run netlify:prepare` compila la interfaz en `dist` y empaqueta la API localmente, sin desplegar. `netlify.toml` omite los builds desde Git y bloquea la compilación remota; mantener además **Stopped builds** en la cuenta. La ruta `/api/*` se redirige a la función y el resto a la aplicación.
 
-1. Conectar el repositorio en Netlify cuando se decida publicar. No habilitar un plan de pago para este piloto.
+1. Preparar un proyecto vacío sin desplegar ni vincular Git. Conservar **Stopped builds** y publicar manualmente solo cuando se autorice. No habilitar un plan de pago ni recargas automáticas para preparar este piloto.
 2. Para una vista previa, usar una rama de Neon dedicada con datos ficticios, `APP_ENV=preview`, y su `DATABASE_URL` como variable **de funciones**. No compartir secretos de producción con vistas previas.
 3. En los contextos `deploy-preview` y `branch-deploy`, configurar además `CAC_PREVIEW_DATABASE_HOST` con el hostname exacto de esa conexión. El servidor bloquea estos contextos si falta esta configuración independiente.
 4. Para producción, aplicar las migraciones y configurar contraseñas sobre la base principal mediante las conexiones correspondientes. La compilación web no ejecuta migraciones ni carga datos.
