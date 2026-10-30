@@ -1,3 +1,4 @@
+import { buildSchedulePreview, scheduleSchema } from "./scheduleReview";
 import { randomUUID } from "node:crypto";
 import type { PoolClient } from "@neondatabase/serverless";
 import { z } from "zod";
@@ -25,11 +26,6 @@ const studentSchema = z.object({
   joined_on: date,
   left_on: date.nullable().optional(),
   slots: slots.optional(),
-});
-const scheduleSchema = z.object({
-  enrollment_id: id,
-  effective_from: date,
-  slots,
 });
 const bookSchema = z.object({
   teacher_id: id,
@@ -101,6 +97,7 @@ export async function proposeChange(
   raw: unknown,
 ) {
   requireBook(access, bookId);
+  await c.query("SELECT pg_advisory_xact_lock(483723)");
   await lockBook(c, bookId);
   const data = visibleBook(await loadBook(c, bookId), access);
   requireWritable(data);
@@ -124,6 +121,31 @@ export async function proposeChange(
   if (kind === "student.update" && payload.left_on === undefined)
     payload.left_on = base.enrollment?.left_on || null;
   await validateWithoutApplying(c, bookId, kind, payload);
+  if (kind === "schedule.update") {
+    const preview = buildSchedulePreview(data, payload);
+    payload.transfer_summary = payload.transfers.map(
+      (t: {
+        from_date: string;
+        from_slot: number;
+        to_date: string;
+        to_slot: number;
+      }) => {
+        const source = preview.affected.find(
+          (l) => l.date === t.from_date && l.slot === t.from_slot,
+        )!;
+        const dest = preview.destinations.find(
+          (l) => l.date === t.to_date && l.slot === t.to_slot,
+        )!;
+        return {
+          from_date: source.date,
+          from_time: source.time,
+          to_date: dest.date,
+          to_time: dest.time,
+          status: source.underlying || source.status,
+        };
+      },
+    );
+  }
   const signature = { ...payload };
   delete signature.password_hash;
   const hash = digest(JSON.stringify(signature));
@@ -190,6 +212,7 @@ export async function reviewRequest(
     ])
   ).rows[0];
   if (!pointer) throw new HttpError(404, "Solicitud no encontrada.");
+  await c.query("SELECT pg_advisory_xact_lock(483723)");
   await lockBook(c, pointer.book_id);
   const request = (
     await c.query("SELECT * FROM change_requests WHERE id=$1 FOR UPDATE", [

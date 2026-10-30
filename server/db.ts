@@ -22,6 +22,7 @@ export function database() {
   return (pool ??= new Pool({
     connectionString: process.env.DATABASE_URL,
     max: 4,
+    connectionTimeoutMillis: 10_000,
     idleTimeoutMillis: 10_000,
   }));
 }

@@ -86,9 +86,19 @@ it("libera el horario retirado y deja de mostrarlo disponible al ocuparlo un ree
   expect(vacantSlots(data, "2026-08-01")).toEqual([]);
   expect(data.attendance[0].enrollment_id).toBe("withdrawn");
 });
-it("aplica el retiro desde su fecha y no anticipa un retiro futuro", () => {
+it("conserva el último día matriculado y libera el horario al día siguiente", () => {
   const e = fixture().enrollments[0];
   expect(isRetired(e, "2026-06-30")).toBe(false);
-  expect(isRetired(e, "2026-07-01")).toBe(true);
+  expect(isRetired(e, "2026-07-01")).toBe(false);
+  expect(isRetired(e, "2026-07-02")).toBe(true);
+  expect(vacantSlots(fixture(), "2026-07-01")).toEqual([]);
   expect(vacantSlots(fixture(), "2026-06-30")).toEqual([]);
+});
+
+it("no ofrece como vacante un horario parcialmente ocupado por otro alumno", () => {
+  const data = fixture();
+  data.schedules[1].slots = [{ day: 0, time: "15:15" }];
+  expect(vacantSlots(data, "2026-08-01")).toEqual([]);
+  data.schedules[1].slots[0].time = "15:45";
+  expect(vacantSlots(data, "2026-08-01")).toEqual([{ day: 0, time: "15:00" }]);
 });

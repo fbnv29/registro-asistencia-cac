@@ -1,3 +1,5 @@
+import { previewSchedule } from "./scheduleReview";
+import { askMaca } from "./maca";
 import { administer } from "./administration";
 import { chileHolidays } from "./holidays";
 import { randomUUID } from "node:crypto";
@@ -17,7 +19,7 @@ import {
   setAttendance,
   type Access,
 } from "./service";
-import { lessonsFor, summarize, labels } from "../src/domain";
+import { lessonsFor, summarize, labels, shortDate } from "../src/domain";
 import ExcelJS from "exceljs";
 import { id, name, password, date, slots } from "./validation";
 import { applyBookChange, createBook } from "./changes";
@@ -62,7 +64,7 @@ async function body(req: Request) {
   if (!req.headers.get("content-type")?.includes("application/json"))
     throw new HttpError(415, "Usa contenido JSON.");
   const text = await req.text();
-  if (text.length > 32000)
+  if (text.length > 256000)
     throw new HttpError(413, "Formulario demasiado grande.");
   try {
     return JSON.parse(text);
@@ -192,6 +194,18 @@ export async function handleApi(
         });
       });
     }
+    if (path === "/admin/maca" && req.method === "POST") {
+      const sessionHash = await transaction(async (c) => {
+        requireAdmin(await accessFrom(c, req));
+        const token = (req.headers.get("cookie") || "")
+          .split(";")
+          .map((s) => s.trim())
+          .find((s) => s.startsWith(cookieName + "="))!
+          .slice(cookieName.length + 1);
+        return digest(token);
+      });
+      return json(await askMaca(await body(req), sessionHash));
+    }
     return await transaction(async (c) => {
       const access = await accessFrom(c, req);
       if (path === "/session") return json(access);
@@ -239,6 +253,18 @@ export async function handleApi(
         requireAdmin(access);
         return json(await createBook(c, access, await body(req)), 201);
       }
+      const schedulePreviewPath = path.match(
+        /^\/books\/([a-f0-9-]+)\/schedule-preview$/,
+      );
+      if (schedulePreviewPath && req.method === "POST")
+        return json(
+          await previewSchedule(
+            c,
+            access!,
+            id.parse(schedulePreviewPath[1]),
+            await body(req),
+          ),
+        );
       const adminBookPath = path.match(
         /^\/admin\/books\/([a-f0-9-]+)\/(students|schedule)$/,
       );
@@ -523,6 +549,7 @@ export async function handleApi(
             "edit-period",
             "edit-book",
             "archive",
+            "delete-permanently",
           ])
           .parse(raw.action);
         if (
@@ -532,6 +559,7 @@ export async function handleApi(
             "edit-period",
             "edit-book",
             "archive",
+            "delete-permanently",
           ].includes(action)
         ) {
           await administer(c, access, raw);
@@ -699,6 +727,25 @@ export async function handleApi(
         error.status,
       );
     const code = (error as { code?: string }).code;
+    if (code === "23P01") {
+      let message =
+        "El horario se superpone con otra clase del mismo profesor. Revisa todos sus libros.";
+      try {
+        const detail = z
+          .object({
+            date,
+            time: z.string().regex(/^\d{2}:\d{2}$/),
+            end_time: z.string().regex(/^\d{2}:\d{2}$/),
+            student: name,
+            discipline: name,
+          })
+          .parse(JSON.parse((error as { detail?: string }).detail || ""));
+        message = `El profesor ya tiene clase el ${shortDate(detail.date)}, ${detail.time}–${detail.end_time}, con ${detail.student} (${detail.discipline}). Elige un horario disponible.`;
+      } catch {
+        /* Older database guards do not include structured details. */
+      }
+      return json({ error: message, code: "SCHEDULE_CONFLICT" }, 409);
+    }
     if (code === "23503")
       return json(
         {

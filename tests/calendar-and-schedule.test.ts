@@ -121,3 +121,20 @@ it("rechaza clases que terminan después de medianoche y permite terminar a las 
   data.schedules[0].slots[0].time = "23:15";
   expect(scheduleConflict(data, "a")).toBe(null);
 });
+
+it("no bloquea una edición por cruces en versiones posteriores que no modifica", () => {
+  const data = fixture();
+  data.schedules[1].slots[0].time = "15:00";
+  data.schedules.push({
+    id: "future",
+    enrollment_id: "b",
+    effective_from: "2026-07-01",
+    slots: [{ day: 0, time: "14:00" }],
+  });
+  expect(scheduleConflict(data, "b", "2026-06-01")).not.toBe(null);
+  expect(scheduleConflict(data, "b", "2026-06-01", "2026-06-30")).toBe(null);
+  data.schedules[1].slots[0].time = "14:30";
+  expect(
+    scheduleConflict(data, "b", "2026-06-01", "2026-06-30")?.message,
+  ).toContain("14:00–14:45, Alumno A");
+});

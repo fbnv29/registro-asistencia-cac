@@ -57,6 +57,7 @@ export interface Suspension {
   active?: boolean;
 }
 export interface SavedAttendance {
+  time?: string;
   enrollment_id: string;
   date: string;
   slot: number;
@@ -219,7 +220,8 @@ export function summarize(lessons: Lesson[]) {
 }
 
 export function isRetired(enrollment: Enrollment, on = localToday()): boolean {
-  return !!enrollment.left_on && enrollment.left_on <= on;
+  // left_on is the last enrolled day, matching lessonsFor and the database guard.
+  return !!enrollment.left_on && enrollment.left_on < on;
 }
 /** Timetabled positions freed by withdrawals and not occupied by another enrollment. */
 export function vacantSlots(data: BookData, on = localToday()): Slot[] {
@@ -228,16 +230,25 @@ export function vacantSlots(data: BookData, on = localToday()): Slot[] {
       .filter((v) => v.enrollment_id === e.id && v.effective_from <= on)
       .sort((a, b) => b.effective_from.localeCompare(a.effective_from))[0]
       ?.slots || [];
-  const occupied = new Set(
-    data.enrollments
-      .filter((e) => e.joined_on <= on && !isRetired(e, on))
-      .flatMap(scheduled)
-      .map((s) => `${s.day}/${s.time}`),
-  );
+  const occupied = data.enrollments
+    .filter((e) => e.joined_on <= on && !isRetired(e, on))
+    .flatMap(scheduled);
+  const minutes = (time: string) =>
+    Number(time.slice(0, 2)) * 60 + Number(time.slice(3, 5));
   const free = data.enrollments
     .filter((e) => isRetired(e, on))
     .flatMap(scheduled)
-    .filter((s) => !occupied.has(`${s.day}/${s.time}`));
+    .filter(
+      (slot) =>
+        !occupied.some(
+          (other) =>
+            slot.day === other.day &&
+            minutes(slot.time) <
+              minutes(other.time) + data.book.duration_minutes &&
+            minutes(other.time) <
+              minutes(slot.time) + data.book.duration_minutes,
+        ),
+    );
   return [...new Map(free.map((s) => [`${s.day}/${s.time}`, s])).values()];
 }
 
@@ -246,13 +257,16 @@ export function scheduleConflict(
   data: BookData,
   targetId: string,
   from = data.period.start_date,
+  to = data.period.end_date,
 ) {
   const byDate = new Map<string, Lesson[]>();
-  for (const lesson of lessonsFor(data, from)) {
+  for (const lesson of lessonsFor(data, from, to)) {
     byDate.set(lesson.date, [...(byDate.get(lesson.date) || []), lesson]);
   }
   const minutes = (time: string) =>
     Number(time.slice(0, 2)) * 60 + Number(time.slice(3, 5));
+  const clock = (value: number) =>
+    `${String(Math.floor(value / 60)).padStart(2, "0")}:${String(value % 60).padStart(2, "0")}`;
   for (const [date, lessons] of byDate) {
     for (const lesson of lessons.filter((l) => l.enrollment_id === targetId)) {
       const start = minutes(lesson.time),
@@ -281,7 +295,7 @@ export function scheduleConflict(
           date,
           time: collision.time,
           name: student?.full_name || "otra sesión",
-          message: `Ya existe un evento en ese horario: ${shortDate(date)}, ${collision.time}, ${student?.full_name || "otra sesión"}. Revisa la duración y elige un horario disponible.`,
+          message: `Ya existe un evento en ese horario: ${shortDate(date)}, ${collision.time}–${clock(minutes(collision.time) + data.book.duration_minutes)}, ${student?.full_name || "otra sesión"}. Revisa la duración y elige un horario disponible.`,
         };
       }
     }

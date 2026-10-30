@@ -45,7 +45,7 @@ No hay contraseñas predeterminadas en el repositorio. Las de esta sesión está
 2. Administración crea los libros: selecciona profesor y período, escribe la disciplina y el número de sesiones semanales, y define la contraseña del libro. Un profesor con acceso a un libro puede proponer otro para su misma disciplina docente desde Solicitudes; administración debe aprobar su creación.
 3. Dentro del libro el profesor propone estudiantes: nombre completo, ingreso y día/hora de cada sesión. El registro aparece después de la aprobación administrativa. Administración también puede registrar estudiantes directamente. La duración parte en 45 minutos y administración puede ajustarla por libro.
 4. La hoja **Asistencia** muestra estudiantes en filas y semanas de lunes a domingo en columnas. Cada sesión muestra su fecha real. Los cambios se guardan al elegir estado; los fallos muestran **Reintentar**.
-5. **Horario** muestra la distribución recurrente vigente en una fecha. Sus cambios conservan el pasado. Si un cambio dejaría marcas existentes fuera de horario, el servidor pide otra fecha o retirar esas marcas explícitamente antes de continuar.
+5. **Horario** permite cambios permanentes desde cualquier fecha de la matrícula, incluso a mitad de semana. Antes de guardar se comparan el horario anterior y el nuevo. Si hay asistencias afectadas por cambios de día, hora u orden, se debe elegir una clase de destino para cada marca y confirmar su traslado; se conserva su estado y el historial anterior. Los destinos pueden pertenecer a otras semanas de la vigencia modificada, deben ser distintos y estar disponibles. El profesor envía una solicitud y administración aplica el cambio al aprobarla. Si las asistencias o el horario cambiaron mientras tanto, se exige una nueva revisión; nunca se borran marcas automáticamente.
 6. **Estudiantes** permite proponer correcciones de nombre y retiros; solo administración puede confirmarlos o aplicarlos directamente. El ingreso original se conserva. Un reemplazante se registra como estudiante independiente.
 7. Administración suspende fechas o intervalos, inclusive ambos extremos, para el CAC, un profesor con todos sus libros o un libro. Puede quitar una suspensión y recuperar las marcas subyacentes.
 8. **Resumen** filtra por fechas y exporta un `.xlsx` con resumen por estudiante, total del libro y detalle de sesiones. El total del libro se pondera por sesiones, no por promedio de porcentajes individuales.
@@ -74,10 +74,13 @@ Las fechas se manejan como fechas locales; la semana actual usa `America/Santiag
 | `POST /books`                                         | Crear libro exclusivamente con acceso administrativo                           |
 | `GET /books/:id`                                      | Matrículas, horarios, asistencia y suspensiones del libro autorizado           |
 | `POST /books/:id/students`                            | Proponer matrícula o actualización; respuesta 202                              |
+| `POST /books/:id/schedule-preview`                    | Revisar horario, marcas afectadas, destinos y token de revisión                |
 | `POST /books/:id/schedule`                            | Proponer horario con fecha de vigencia; respuesta 202                          |
 | `POST /books/:id/attendance`                          | Marcar o devolver a pendiente una sesión                                       |
 | `GET /books/:id/export?from=AAAA-MM-DD&to=AAAA-MM-DD` | Descargar Excel autorizado                                                     |
 | `GET /admin`, `POST /admin`                           | Gestión administrativa                                                         |
+
+Los cambios de horario y las solicitudes aceptan `review_token` y `transfers`: cada traslado contiene `from_date`, `from_slot`, `to_date` y `to_slot`. Cuando hay marcas afectadas se exige el token de la vista previa y una correspondencia completa, sin destinos repetidos, ocupados o suspendidos. El servidor revalida los datos y aplica horario y traslados dentro de la misma transacción. La auditoría conserva fecha, hora, estado y revisión de origen y fecha y hora de destino. Las versiones futuras del horario permanecen intactas. No se requiere una migración adicional para este flujo.
 
 Las contraseñas usan scrypt con sal aleatoria. Las cookies de sesión son HttpOnly, SameSite=Strict y Secure bajo HTTPS; vencen a las 12 horas. PostgreSQL guarda únicamente el hash del token de sesión. Hay validación de origen en escrituras, autorización por libro en cada operación, consultas parametrizadas y límites de intentos persistidos por IP y destino. Restablecer una contraseña revoca las sesiones correspondientes. La bitácora registra fecha, tipo de acceso y cambios, pero no identifica personas porque las contraseñas se comparten.
 
@@ -92,6 +95,10 @@ RUN_INTEGRATION=true npm run test:integration
 ```
 
 Las pruebas de integración crean sus propios registros con UUID y eliminan únicamente sus fixtures. Requieren las contraseñas administrativas locales ya configuradas. Cubren autorización, supercontraseña, persistencia y corrección, suspensiones superpuestas y restauración, matrículas tardías y retiros, horarios, Excel, límite de intentos y revocación de sesiones.
+
+La suite también reproduce el falso conflicto histórico de horarios y valida altas simultáneas, horarios consecutivos y cruces parciales entre libros, versiones futuras, retiros y reincorporaciones, restauración de libros y períodos, cambio de profesor, duración y extensión del período. Las pruebas del validador usan esquemas aislados que se revierten por completo. Se ejecutan en serie para no competir por el bloqueo global de horarios.
+
+La fecha de retiro es el último día de matrícula: el horario queda disponible al día siguiente. El historial y las asistencias se conservan. Archivar un libro o período libera sus horarios; restaurarlo comprueba que sus clases vigentes no choquen con otras que ocuparon ese espacio.
 
 GitHub Actions ejecuta las pruebas sin conexión a datos y la compilación en pushes y pull requests. No despliega automáticamente.
 
@@ -190,3 +197,7 @@ npm run test:e2e
 Las pruebas de navegador crean y limpian sus propios registros ficticios. Cubren propuesta/aprobación, notas, asistencia persistente, desconexión y reintento, conflicto entre clientes, sesión vencida, archivo, consulta/exportación y navegación por teclado en 390 px. No se ejecutan con datos de producción ni se despliega desde estas pruebas.
 
 Antes de publicar: aplicar migraciones a la base de destino, configurar variables del servidor y contraseñas definitivas mediante `db:passwords` y el panel, confirmar separación entre producción y vistas previas, verificar cookies Secure/HttpOnly en HTTPS, guardado/recarga/exportación en Netlify y configurar retención y recuperación de respaldos según los servicios contratados. `123456` se mantiene solo en el entorno local de este piloto. Validar facilidad de uso con profesores reales durante el piloto.
+
+## 🤖 Maca Asistente
+
+El panel administrativo incorpora análisis institucional de solo lectura, con interpretación opcional mediante Groq o Gemini y respaldo interno y protección de datos personales. Configuración, uso, seguridad, migraciones y pruebas: [guía de Maca](docs/MACA.md).

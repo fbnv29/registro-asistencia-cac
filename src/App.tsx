@@ -1,3 +1,10 @@
+import {
+  lessonKey,
+  type SchedulePreview,
+  type ScheduleInput,
+} from "./scheduleReview";
+import { confirmPermanentDelete } from "./permanentDelete";
+import { MacaAssistant } from "./MacaAssistant";
 import React, {
   useEffect,
   useId,
@@ -31,6 +38,7 @@ import {
 import { api, apiBlob, ApiError } from "./api";
 import { markDraft, confirmLeave } from "./drafts";
 import EntityManager from "./EntityManager";
+import Modal from "./Modal";
 import RequestList from "./RequestList";
 import {
   addDays,
@@ -83,78 +91,6 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
     </label>
   );
 }
-function Modal({
-  title,
-  onClose,
-  children,
-}: {
-  title: string;
-  onClose: () => void;
-  children: ReactNode;
-}) {
-  const ref = useRef<HTMLDivElement>(null);
-  const titleId = useId();
-  useEffect(() => {
-    const previous = document.activeElement as HTMLElement;
-    const root = ref.current;
-    root?.querySelector<HTMLElement>("input,select,button")?.focus();
-    function key(e: KeyboardEvent) {
-      if (root && !root.contains(document.activeElement)) return;
-      if (e.key === "Escape" && confirmLeave()) onClose();
-      if (e.key === "Tab" && root) {
-        const items = Array.from(
-          root.querySelectorAll<HTMLElement>(
-            "button:not(:disabled),input:not(:disabled),select:not(:disabled),textarea:not(:disabled),a[href]",
-          ),
-        );
-        const first = items[0],
-          last = items.at(-1);
-        if (e.shiftKey && document.activeElement === first) {
-          e.preventDefault();
-          last?.focus();
-        } else if (!e.shiftKey && document.activeElement === last) {
-          e.preventDefault();
-          first?.focus();
-        }
-      }
-    }
-    document.addEventListener("keydown", key);
-    return () => {
-      document.removeEventListener("keydown", key);
-      previous?.focus();
-    };
-  }, []);
-  return (
-    <div
-      className="overlay"
-      onClick={(e) => {
-        if (e.target === e.currentTarget && confirmLeave()) onClose();
-      }}
-    >
-      <div
-        className="modal"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={titleId}
-        ref={ref}
-      >
-        <div className="modal-head">
-          <h2 id={titleId}>{title}</h2>
-          <button
-            className="icon-button"
-            aria-label="Cerrar"
-            onClick={() => {
-              if (confirmLeave()) onClose();
-            }}
-          >
-            <X />
-          </button>
-        </div>
-        {children}
-      </div>
-    </div>
-  );
-}
 function SubmitForm({
   children,
   onSubmit,
@@ -196,6 +132,37 @@ function SubmitForm({
         {busy ? "Guardando…" : label}
       </button>
     </form>
+  );
+}
+function PopupSubmitForm({
+  title,
+  label,
+  onSubmit,
+  children,
+}: {
+  title: string;
+  label?: string;
+  onSubmit: (form: FormData) => Promise<unknown>;
+  children: ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <button className="button primary" onClick={() => setOpen(true)}>
+        {title}
+      </button>
+      {open && (
+        <Modal title={title} onClose={() => setOpen(false)}>
+          <SubmitForm
+            label={label}
+            onSubmit={onSubmit}
+            onDone={() => setOpen(false)}
+          >
+            {children}
+          </SubmitForm>
+        </Modal>
+      )}
+    </>
   );
 }
 function PasswordDialog({
@@ -521,8 +488,9 @@ function StudentForm({
                   />
                 </Field>
                 <p className="hint">
-                  El retiro conserva su historial y libera el horario. Deja la
-                  fecha vacía si continúa en el taller.
+                  El retiro conserva su historial. La fecha indicada es el
+                  último día de matrícula; el horario queda libre desde el día
+                  siguiente. Deja la fecha vacía si continúa en el taller.
                 </p>
               </>
             )}
@@ -548,6 +516,186 @@ function ScheduleForm({
   const versions = data.schedules
     .filter((s) => s.enrollment_id === student.id)
     .sort((a, b) => b.effective_from.localeCompare(a.effective_from));
+  const [scheduleDraft, setScheduleDraft] = useState<ScheduleInput | null>(
+    null,
+  );
+  const [review, setReview] = useState<{
+    input: ScheduleInput;
+    preview: SchedulePreview;
+  } | null>(null);
+  const [destinations, setDestinations] = useState<Record<string, string>>({});
+  const reviewDraft = useRef({});
+  useEffect(() => {
+    const draft = reviewDraft.current;
+    markDraft(draft, !!review);
+    return () => markDraft(draft, false);
+  }, [review]);
+  if (review) {
+    const { input, preview } = review;
+    const selected = Object.values(destinations).filter(Boolean);
+    const complete =
+      preview.affected.every((l) => destinations[lessonKey(l)]) &&
+      new Set(selected).size === preview.affected.length;
+    return (
+      <Modal
+        title={`Revisar horario de ${student.full_name}`}
+        onClose={onClose}
+      >
+        <p>
+          El cambio permanente comienza el {shortDate(preview.from)}. Las clases
+          anteriores conservan su horario.
+        </p>
+        {data.schedules.some(
+          (s) =>
+            s.enrollment_id === student.id && s.effective_from > preview.from,
+        ) && (
+          <p className="hint">
+            Este cambio se aplica hasta el {shortDate(preview.to)}. Los horarios
+            posteriores ya programados se conservan.
+          </p>
+        )}
+        <div className="request-comparison">
+          <div>
+            <strong>Horario anterior</strong>
+            {preview.previous.map((s, i) => (
+              <span key={i}>
+                {days[s.day]} · {s.time}
+              </span>
+            ))}
+          </div>
+          <div>
+            <strong>Nuevo horario</strong>
+            {preview.proposed.map((s, i) => (
+              <span key={i}>
+                {days[s.day]} · {s.time}
+              </span>
+            ))}
+          </div>
+        </div>
+        <SubmitForm
+          label={propose ? "Confirmar y enviar solicitud" : "Confirmar cambio"}
+          onDone={onDone}
+          onSubmit={async (f) => {
+            if (!complete)
+              throw new Error(
+                "Relaciona todas las asistencias con destinos distintos, o ajusta la fecha o el horario.",
+              );
+            if (preview.affected.length && f.get("confirm_transfers") !== "on")
+              throw new Error("Confirma el traslado de las asistencias.");
+            const transfers = preview.affected.map((l) => {
+              const dest = preview.destinations.find(
+                (d) => lessonKey(d) === destinations[lessonKey(l)],
+              )!;
+              return {
+                from_date: l.date,
+                from_slot: l.slot,
+                to_date: dest.date,
+                to_slot: dest.slot,
+              };
+            });
+            const payload = {
+              ...input,
+              review_token: preview.review_token,
+              transfers,
+            };
+            try {
+              return await api(
+                propose
+                  ? `/books/${data.book.id}/requests`
+                  : `/admin/books/${data.book.id}/schedule`,
+                propose ? { kind: "schedule.update", data: payload } : payload,
+              );
+            } catch (error) {
+              if (
+                error instanceof ApiError &&
+                error.code === "SCHEDULE_REVIEW_REQUIRED"
+              ) {
+                const updated = await api<SchedulePreview>(
+                  `/books/${data.book.id}/schedule-preview`,
+                  input,
+                );
+                setReview({ input, preview: updated });
+                setDestinations({});
+              }
+              throw error;
+            }
+          }}
+        >
+          {preview.affected.length ? (
+            <>
+              <p>
+                Estas asistencias ya están registradas. Elige a qué clase del
+                nuevo horario corresponde cada una. Se conservará su estado.
+              </p>
+              {preview.affected.map((l) => (
+                <Field
+                  key={lessonKey(l)}
+                  label={`${shortDate(l.date)} · ${l.time} · ${labels[l.underlying || l.status]}`}
+                >
+                  <select
+                    required
+                    aria-label={`Destino de ${l.date} ${l.time}`}
+                    value={destinations[lessonKey(l)] || ""}
+                    onChange={(e) =>
+                      setDestinations((old) => ({
+                        ...old,
+                        [lessonKey(l)]: e.target.value,
+                      }))
+                    }
+                  >
+                    <option value="">Seleccionar clase de destino</option>
+                    {preview.destinations.map((d) => (
+                      <option
+                        key={lessonKey(d)}
+                        value={lessonKey(d)}
+                        disabled={
+                          selected.includes(lessonKey(d)) &&
+                          destinations[lessonKey(l)] !== lessonKey(d)
+                        }
+                      >
+                        {shortDate(d.date)} · {d.time} · Sesión {d.slot + 1}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+              ))}
+              {!complete && (
+                <p className="hint">
+                  Cada marca necesita un destino distinto. Si no hay suficientes
+                  clases disponibles, ajusta la fecha o el horario.
+                </p>
+              )}
+              <label>
+                <input
+                  key={preview.review_token}
+                  type="checkbox"
+                  name="confirm_transfers"
+                  required
+                />{" "}
+                Confirmo las correspondencias y el traslado de estas
+                asistencias.
+              </label>
+            </>
+          ) : (
+            <p>No hay asistencias registradas que deban trasladarse.</p>
+          )}
+          {propose && (
+            <p className="hint">
+              El cambio y los traslados se aplicarán cuando administración
+              apruebe la solicitud.
+            </p>
+          )}
+          <button
+            type="button"
+            className="button"
+            onClick={() => setReview(null)}
+          >
+            Ajustar fecha u horario
+          </button>
+        </SubmitForm>
+      </Modal>
+    );
+  }
   return (
     <Modal title={`Horario de ${student.full_name}`} onClose={onClose}>
       {propose && (
@@ -557,24 +705,32 @@ function ScheduleForm({
         </p>
       )}
       <SubmitForm
-        label={propose ? "Enviar solicitud" : "Guardar cambios"}
-        onDone={onDone}
-        onSubmit={(f) => {
-          const input = {
+        label="Revisar cambio"
+        onSubmit={async (f) => {
+          const input: ScheduleInput = {
             enrollment_id: student.id,
-            effective_from: f.get("effective_from"),
+            effective_from: String(f.get("effective_from")),
             slots: readSlots(f, data.book.sessions_per_week),
           };
-          return api(
-            propose
-              ? `/books/${data.book.id}/requests`
-              : `/admin/books/${data.book.id}/schedule`,
-            propose ? { kind: "schedule.update", data: input } : input,
+          setScheduleDraft(input);
+          const preview = await api<SchedulePreview>(
+            `/books/${data.book.id}/schedule-preview`,
+            input,
           );
+          setDestinations(
+            Object.fromEntries(
+              preview.suggestions.map((t) => [
+                `${t.from_date}/${t.from_slot}`,
+                `${t.to_date}/${t.to_slot}`,
+              ]),
+            ),
+          );
+          setReview({ input, preview });
         }}
       >
         <p className="muted">
-          El horario anterior se conserva hasta la fecha del cambio.
+          El horario anterior rige hasta el día previo. El nuevo comienza en la
+          fecha elegida.
         </p>
         <Field label="Aplicar desde">
           <input
@@ -584,16 +740,18 @@ function ScheduleForm({
             min={student.joined_on}
             max={student.left_on || data.period.end_date}
             defaultValue={
-              [student.joined_on, localToday()].sort().at(-1)! >
+              scheduleDraft?.effective_from ||
+              ([student.joined_on, localToday()].sort().at(-1)! >
               (student.left_on || data.period.end_date)
                 ? student.left_on || data.period.end_date
-                : [student.joined_on, localToday()].sort().at(-1)
+                : [student.joined_on, localToday()].sort().at(-1))
             }
           />
         </Field>
         <SlotsFields
           count={data.book.sessions_per_week}
           initial={
+            scheduleDraft?.slots ||
             versions.find((v) => v.effective_from <= localToday())?.slots ||
             versions.at(-1)?.slots
           }
@@ -725,6 +883,7 @@ function AttendanceGrid({
         ? allWeeks[0]
         : allWeeks.at(-1)!;
   });
+  const [weekJump, setWeekJump] = useState(0);
   const [saves, setSaves] = useState<
     Record<
       string,
@@ -753,7 +912,7 @@ function AttendanceGrid({
           .width || 230;
       scroll.current.scrollLeft = target.offsetLeft - studentWidth;
     }
-  }, [focusWeek]);
+  }, [focusWeek, weekJump]);
   const draft = useRef({});
   useEffect(() => {
     markDraft(
@@ -855,6 +1014,20 @@ function AttendanceGrid({
           />
         </div>
         <div className="week-nav">
+          <button
+            className="button"
+            disabled={!allWeeks.includes(currentWeek)}
+            onClick={() => {
+              setFocusWeek(currentWeek);
+              setWeekJump((v) => v + 1);
+            }}
+          >
+            Ir a esta semana
+          </button>
+          {!allWeeks.includes(currentWeek) && (
+            <small>La semana actual está fuera del período lectivo.</small>
+          )}
+
           <button
             className="icon-button"
             aria-label="Semana anterior"
@@ -1319,6 +1492,7 @@ function BookView({
     [tab, setTab] = useState(initialTab),
     [studentModal, setStudentModal] = useState<Enrollment | "new" | null>(null),
     [scheduleModal, setScheduleModal] = useState<Enrollment | null>(null),
+    [deletingStudent, setDeletingStudent] = useState(false),
     [studentList, setStudentList] = useState("active"),
     [scheduleDate, setScheduleDate] = useState(localToday()),
     [proposalNotice, setProposalNotice] = useState(""),
@@ -1592,6 +1766,39 @@ function BookView({
                     >
                       <Clock3 size={16} /> Horario
                     </button>
+                    {access?.kind === "admin" && (
+                      <button
+                        className="button small danger"
+                        disabled={deletingStudent}
+                        onClick={async () => {
+                          if (
+                            !confirmLeave() ||
+                            !confirmPermanentDelete(
+                              e.full_name,
+                              "Se eliminará su ficha y TODAS sus matrículas, horarios y asistencias en todos los libros.",
+                            )
+                          )
+                            return;
+                          setDeletingStudent(true);
+                          try {
+                            await api("/admin", {
+                              action: "delete-permanently",
+                              entity: "student",
+                              id: e.student_id,
+                              confirmed: true,
+                              confirmation: "ELIMINAR",
+                            });
+                            await refresh();
+                          } catch (err) {
+                            setError((err as Error).message);
+                          } finally {
+                            setDeletingStudent(false);
+                          }
+                        }}
+                      >
+                        Borrar definitivamente
+                      </button>
+                    )}
                   </div>
                 ))}
             </div>
@@ -2127,56 +2334,23 @@ function Admin({
             <p className="muted">
               El mismo profesor puede asociarse a varios libros.
             </p>
-            <SubmitForm
+            <PopupSubmitForm
+              title="Agregar profesor"
               label="Agregar profesor"
               onSubmit={(f) => save({ action: "teacher", name: f.get("name") })}
             >
               <Field label="Nombre completo">
                 <input name="name" required maxLength={120} />
               </Field>
-            </SubmitForm>
-            <div className="table-scroll admin-data-table">
-              <table className="plain-table">
-                <thead>
-                  <tr>
-                    <th>Profesor</th>
-                    <th>Disciplinas / libros</th>
-                    <th>Total de libros</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {catalog.teachers.map((t) => {
-                    const books = catalog.books.filter(
-                      (b) => b.teacher_id === t.id,
-                    );
-                    return (
-                      <tr key={t.id}>
-                        <th>{t.name}</th>
-                        <td>
-                          {books.length ? (
-                            books.map((book) => (
-                              <div className="teacher-discipline" key={book.id}>
-                                <strong>{book.discipline}</strong>
-                                <small>{book.period_name}</small>
-                              </div>
-                            ))
-                          ) : (
-                            <span className="muted">Sin libros asignados</span>
-                          )}
-                        </td>
-                        <td>{books.length}</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+            </PopupSubmitForm>
+            <EntityManager catalog={catalog} save={save} teachersOnly />
           </>
         )}
         {tab === "periods" && (
           <>
             <h2>Períodos lectivos</h2>
-            <SubmitForm
+            <PopupSubmitForm
+              title="Crear período"
               label="Crear período"
               onSubmit={(f) =>
                 save({
@@ -2203,7 +2377,7 @@ function Admin({
                   <input type="date" name="end_date" required />
                 </Field>
               </div>
-            </SubmitForm>
+            </PopupSubmitForm>
             <ul className="simple-list">
               {catalog.periods.map((p) => (
                 <li key={p.id}>
@@ -2407,7 +2581,8 @@ function Admin({
         {tab === "books" && (
           <>
             <h2>Duración de las clases</h2>
-            <SubmitForm
+            <PopupSubmitForm
+              title="Cambiar duración"
               onSubmit={(f) =>
                 save({
                   action: "duration",
@@ -2437,7 +2612,7 @@ function Admin({
                   required
                 />
               </Field>
-            </SubmitForm>
+            </PopupSubmitForm>
           </>
         )}
         {tab === "passwords" && (
@@ -2447,7 +2622,8 @@ function Admin({
               La nueva contraseña cierra los accesos anteriores de ese tipo.
               Administración y creación deben tener contraseñas distintas.
             </p>
-            <SubmitForm
+            <PopupSubmitForm
+              title="Restablecer contraseña"
               onSubmit={async (f) => {
                 await save({
                   action: "password",
@@ -2493,10 +2669,11 @@ function Admin({
                   autoComplete="new-password"
                 />
               </Field>
-            </SubmitForm>
+            </PopupSubmitForm>
           </>
         )}
       </section>
+      <MacaAssistant books={catalog.books} teachers={catalog.teachers} />
     </main>
   );
 }
@@ -2648,6 +2825,7 @@ export default function App() {
           )}
           <button
             className="admin-link"
+            aria-label="Administración"
             onClick={() => {
               if (confirmLeave()) {
                 access?.kind === "admin"

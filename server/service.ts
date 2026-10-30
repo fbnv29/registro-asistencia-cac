@@ -86,7 +86,7 @@ export async function loadBook(
   ).rows;
   const attendance = (
     await c.query(
-      "SELECT l.enrollment_id,l.date::text,l.slot,a.status,l.revision FROM lessons l LEFT JOIN attendance a ON a.lesson_id=l.id JOIN enrollments e ON e.id=l.enrollment_id WHERE e.book_id=$1",
+      "SELECT l.enrollment_id,l.date::text,l.slot,to_char(l.time,'HH24:MI') AS time,a.status,l.revision FROM lessons l LEFT JOIN attendance a ON a.lesson_id=l.id JOIN enrollments e ON e.id=l.enrollment_id WHERE e.book_id=$1",
       [bookId],
     )
   ).rows;
@@ -227,7 +227,7 @@ export async function loadAdminBooks(c: PoolClient): Promise<BookData[]> {
   ).rows;
   const attendance = (
     await c.query(
-      "SELECT l.enrollment_id,l.date::text,l.slot,a.status,l.revision FROM lessons l LEFT JOIN attendance a ON a.lesson_id=l.id",
+      "SELECT l.enrollment_id,l.date::text,l.slot,to_char(l.time,'HH24:MI') AS time,a.status,l.revision FROM lessons l LEFT JOIN attendance a ON a.lesson_id=l.id",
     )
   ).rows;
   const suspensions = (

@@ -3,6 +3,8 @@ import { Plus, Check, X, Clock3 } from "lucide-react";
 import { api } from "./api";
 import {
   days,
+  labels,
+  type Mark,
   shortDate,
   type Slot,
   type Enrollment,
@@ -25,6 +27,13 @@ interface ChangeRequest {
     left_on?: string | null;
     slots?: Slot[];
     effective_from?: string;
+    transfer_summary?: {
+      from_date: string;
+      from_time: string;
+      to_date: string;
+      to_time: string;
+      status: Mark;
+    }[];
     discipline?: string;
     sessions_per_week?: number;
   };
@@ -123,6 +132,17 @@ function Details({ request: r }: { request: ChangeRequest }) {
                   <SlotSummary slots={p.slots} />
                 </div>
               </div>
+              {!!p.transfer_summary?.length && (
+                <div>
+                  <strong>Traslados de asistencias</strong>
+                  {p.transfer_summary.map((t, i) => (
+                    <p key={i}>
+                      {shortDate(t.from_date)} · {t.from_time} →{" "}
+                      {shortDate(t.to_date)} · {t.to_time} · {labels[t.status]}
+                    </p>
+                  ))}
+                </div>
+              )}
             </>
           ) : (
             <SlotSummary slots={p.slots} />
