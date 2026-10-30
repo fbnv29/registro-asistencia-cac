@@ -11,4 +11,5 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm test
-      - run: npm run build
+      # Local compilation/packaging only: no Netlify login, upload or deploy.
+      - run: npm run netlify:prepare
